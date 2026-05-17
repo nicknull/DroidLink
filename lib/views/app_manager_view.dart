@@ -275,15 +275,16 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
                     itemCount: _permissions.length,
                     itemBuilder: (context, index) {
                       final perm = _permissions[index];
+                      final hasChinese = kPermissionNames.containsKey(perm);
                       return SwitchListTile(
                         title: Text(
-                          kPermissionNames[perm] ?? perm.replaceFirst('android.permission.', ''),
+                          getPermissionDisplayName(perm),
                           style: const TextStyle(fontSize: 13),
                         ),
-                        subtitle: kPermissionNames[perm] != null
+                        subtitle: hasChinese
                             ? Text(
-                                perm.replaceFirst('android.permission.', ''),
-                                style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.outline),
+                                perm,
+                                style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.outline),
                               )
                             : null,
                         value: true,

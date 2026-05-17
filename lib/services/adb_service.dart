@@ -508,15 +508,13 @@ class AdbService {
     final permissions = <String>{};
     for (final line in output.split('\n')) {
       final trimmed = line.trim();
-      // 匹配多种 granted=true 格式:
-      // android.permission.CAMERA: granted=true
-      // android.permission.CAMERA, granted=true
       if (trimmed.contains('granted=true')) {
         var perm = trimmed
             .split(RegExp(r'[,:]'))
             .first
             .trim();
-        if (perm.startsWith('android.permission.')) {
+        // 过滤掉非权限行（如 flags 等）
+        if (perm.contains('.') && !perm.contains(' ') && perm.length > 5) {
           permissions.add(perm);
         }
       }
