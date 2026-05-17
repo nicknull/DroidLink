@@ -82,7 +82,21 @@ class AdbService {
       }
     }
 
-    // 5. 回退到 PATH 中的 adb
+    // 5. 检查 Homebrew 安装路径（打包后 PATH 不可靠）
+    if (Platform.isMacOS) {
+      final brewPaths = [
+        '/opt/homebrew/bin/adb',
+        '/usr/local/bin/adb',
+      ];
+      for (final path in brewPaths) {
+        if (File(path).existsSync()) {
+          _adbPath = path;
+          return;
+        }
+      }
+    }
+
+    // 6. 回退到 PATH 中的 adb
     _adbPath = 'adb';
   }
 
@@ -111,6 +125,16 @@ class AdbService {
       }
     }
 
+    // Homebrew 安装的 aapt
+    if (Platform.isMacOS) {
+      for (final brewAapt in ['/opt/homebrew/bin/aapt', '/usr/local/bin/aapt']) {
+        if (File(brewAapt).existsSync()) {
+          _aaptPath = brewAapt;
+          return;
+        }
+      }
+    }
+
     for (final buildToolsDir in searchDirs) {
       if (!buildToolsDir.existsSync()) continue;
       final versions = buildToolsDir.listSync()
@@ -129,11 +153,26 @@ class AdbService {
 
   void _detectScrcpy() {
     final name = Platform.isWindows ? 'scrcpy.exe' : 'scrcpy';
+
+    // 1. 直接检查已知安装路径（打包后 PATH 可能不包含这些目录）
+    if (Platform.isMacOS) {
+      final knownPaths = [
+        '/opt/homebrew/bin/scrcpy',
+        '/usr/local/bin/scrcpy',
+      ];
+      for (final path in knownPaths) {
+        if (File(path).existsSync()) {
+          _scrcpyPath = path;
+          return;
+        }
+      }
+    }
+
+    // 2. 通过 which/where 查找（开发模式下有效）
     final cmd = Platform.isWindows ? 'where' : 'which';
     final result = Process.runSync(cmd, [name], runInShell: true);
     if (result.exitCode == 0) {
       final output = (result.stdout as String).trim();
-      // where 可能返回多行，取第一行
       final path = output.split('\n').first.trim();
       if (File(path).existsSync()) {
         _scrcpyPath = path;
@@ -165,13 +204,22 @@ class AdbService {
     }
 
     final whichCmd = Platform.isWindows ? 'where' : 'which';
-    final hasBrew = Process.runSync(whichCmd, ['brew'], runInShell: true).exitCode == 0;
+    bool hasBrew = Process.runSync(whichCmd, ['brew'], runInShell: true).exitCode == 0;
+
+    // 打包后 PATH 可能不包含 Homebrew，检查已知路径
+    if (!hasBrew && Platform.isMacOS) {
+      hasBrew = const ['/opt/homebrew/bin/brew', '/usr/local/bin/brew']
+          .any((p) => File(p).existsSync());
+    }
 
     if (Platform.isMacOS && hasBrew) {
       yield '正在通过 Homebrew 安装 $tool...\n';
       final package = tool == 'adb' ? 'android-platform-tools' : tool;
+      // 使用 brew 完整路径，打包后 PATH 不可靠
+      final brewPath = const ['/opt/homebrew/bin/brew', '/usr/local/bin/brew']
+          .firstWhere((p) => File(p).existsSync(), orElse: () => 'brew');
       final process = await Process.start(
-        'brew', ['install', package],
+        brewPath, ['install', package],
         runInShell: true,
       );
 
