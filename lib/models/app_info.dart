@@ -6,8 +6,9 @@ class AppInfo {
   final String versionCode;
   final bool isSystem;
   final int size;
+  bool isFavorite;
 
-  const AppInfo({
+  AppInfo({
     required this.packageName,
     this.apkPath = '',
     this.label = '',
@@ -15,6 +16,7 @@ class AppInfo {
     this.versionCode = '',
     this.isSystem = false,
     this.size = 0,
+    this.isFavorite = false,
   });
 
   factory AppInfo.fromPmLine(String line) {
@@ -66,6 +68,7 @@ class AppInfo {
     String? versionCode,
     bool? isSystem,
     int? size,
+    bool? isFavorite,
   }) {
     return AppInfo(
       packageName: packageName ?? this.packageName,
@@ -75,6 +78,7 @@ class AppInfo {
       versionCode: versionCode ?? this.versionCode,
       isSystem: isSystem ?? this.isSystem,
       size: size ?? this.size,
+      isFavorite: isFavorite ?? this.isFavorite,
     );
   }
 }

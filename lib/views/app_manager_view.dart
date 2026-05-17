@@ -4,6 +4,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:android_manager/viewmodels/device_viewmodel.dart';
 import 'package:android_manager/viewmodels/app_manager_viewmodel.dart';
 import 'package:android_manager/views/components/app_list_tile.dart';
+import 'package:android_manager/constants/permission_names.dart';
 
 class AppManagerView extends StatefulWidget {
   const AppManagerView({super.key});
@@ -116,8 +117,12 @@ class _AppManagerViewState extends State<AppManagerView> {
         final app = vm.filteredApps[index];
         return AppListTile(
           app: app,
-          onUninstall: () => _confirmUninstall(vm, app),
+          onToggleFavorite: () => vm.toggleFavorite(app.packageName),
+          onForceStop: () => _forceStop(vm, app),
+          onClearData: () => _confirmClearData(vm, app),
+          onManagePermissions: () => _showPermissionsDialog(vm, app),
           onExport: () => _exportApk(vm, app),
+          onUninstall: () => _confirmUninstall(vm, app),
         );
       },
     );
@@ -170,5 +175,178 @@ class _AppManagerViewState extends State<AppManagerView> {
       await vm.uninstall(app.packageName);
       vm.loadApps();
     }
+  }
+
+  Future<void> _forceStop(AppManagerViewModel vm, app) async {
+    final ok = await vm.forceStopApp(app.packageName);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(ok ? '已强制停止 ${app.displayLabel}' : '操作失败')),
+      );
+    }
+  }
+
+  Future<void> _confirmClearData(AppManagerViewModel vm, app) async {
+    final ok = await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('确认清除数据'),
+        content: Text('确定要清除「${app.displayLabel}」的所有数据吗？此操作不可恢复。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('清除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      final success = await vm.clearAppData(app.packageName);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(success ? '已清除 ${app.displayLabel} 的数据' : '清除失败')),
+        );
+      }
+    }
+  }
+
+  Future<void> _showPermissionsDialog(AppManagerViewModel vm, app) async {
+    showDialog(
+      context: context,
+      builder: (ctx) => _PermissionsDialog(
+        appName: app.displayLabel,
+        packageName: app.packageName,
+        vm: vm,
+      ),
+    );
+  }
+}
+
+class _PermissionsDialog extends StatefulWidget {
+  final String appName;
+  final String packageName;
+  final AppManagerViewModel vm;
+
+  const _PermissionsDialog({
+    required this.appName,
+    required this.packageName,
+    required this.vm,
+  });
+
+  @override
+  State<_PermissionsDialog> createState() => _PermissionsDialogState();
+}
+
+class _PermissionsDialogState extends State<_PermissionsDialog> {
+  List<String> _permissions = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPermissions();
+  }
+
+  Future<void> _loadPermissions() async {
+    final perms = await widget.vm.getAppPermissions(widget.packageName);
+    if (mounted) {
+      setState(() {
+        _permissions = perms..sort();
+        _loading = false;
+      });
+    }
+  }
+
+  String _permDisplayName(String perm) {
+    final chinese = kPermissionNames[perm];
+    if (chinese != null) return '$chinese\n${perm.replaceFirst('android.permission.', '')}';
+    return perm.replaceFirst('android.permission.', '');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('${widget.appName} - 权限管理'),
+      content: SizedBox(
+        width: 400,
+        height: 400,
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _permissions.isEmpty
+                ? const Center(child: Text('没有已授权的权限'))
+                : ListView.builder(
+                    itemCount: _permissions.length,
+                    itemBuilder: (context, index) {
+                      final perm = _permissions[index];
+                      return SwitchListTile(
+                        title: Text(
+                          _permDisplayName(perm),
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                        value: true,
+                        onChanged: (value) async {
+                          if (!value) {
+                            final ok = await widget.vm.revokePermission(widget.packageName, perm);
+                            if (ok && mounted) {
+                              setState(() => _permissions.remove(perm));
+                            }
+                          }
+                        },
+                      );
+                    },
+                  ),
+      ),
+      actions: [
+        TextButton.icon(
+          onPressed: () async {
+            final ok = await widget.vm.forceStopApp(widget.packageName);
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(ok ? '已强制停止' : '操作失败')),
+              );
+            }
+          },
+          icon: const Icon(Icons.stop_circle_outlined, size: 18),
+          label: const Text('强制停止'),
+        ),
+        TextButton.icon(
+          onPressed: () async {
+            final confirm = await showDialog(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: const Text('确认清除数据'),
+                content: Text('确定要清除「${widget.appName}」的所有数据吗？'),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: const Text('清除', style: TextStyle(color: Colors.red)),
+                  ),
+                ],
+              ),
+            );
+            if (confirm == true) {
+              final ok = await widget.vm.clearAppData(widget.packageName);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(ok ? '已清除数据' : '清除失败')),
+                );
+                Navigator.pop(context);
+              }
+            }
+          },
+          icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+          label: const Text('清除数据'),
+          style: TextButton.styleFrom(foregroundColor: Colors.red),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('关闭'),
+        ),
+      ],
+    );
   }
 }

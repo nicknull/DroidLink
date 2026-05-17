@@ -502,6 +502,48 @@ class AdbService {
     return shell(serial, 'wm size');
   }
 
+  /// 获取应用的已授权权限列表
+  Future<List<String>> getAppPermissions(String serial, String packageName) async {
+    final output = await shell(serial, 'dumpsys package $packageName');
+    final permissions = <String>[];
+    bool inGrantedSection = false;
+    for (final line in output.split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.contains('granted=true')) {
+        // 格式: android.permission.WRITE_EXTERNAL_STORAGE, granted=true
+        final perm = trimmed.split(',').first.trim();
+        if (perm.startsWith('android.permission.')) {
+          permissions.add(perm);
+        }
+      }
+    }
+    return permissions;
+  }
+
+  /// 授予权限
+  Future<bool> grantPermission(String serial, String packageName, String permission) async {
+    final result = await _runCommand(['-s', serial, 'shell', 'pm', 'grant', packageName, permission]);
+    return result.exitCode == 0;
+  }
+
+  /// 撤销权限
+  Future<bool> revokePermission(String serial, String packageName, String permission) async {
+    final result = await _runCommand(['-s', serial, 'shell', 'pm', 'revoke', packageName, permission]);
+    return result.exitCode == 0;
+  }
+
+  /// 清除应用数据
+  Future<bool> clearAppData(String serial, String packageName) async {
+    final result = await _runCommand(['-s', serial, 'shell', 'pm', 'clear', packageName]);
+    return result.exitCode == 0;
+  }
+
+  /// 强制停止应用
+  Future<bool> forceStopApp(String serial, String packageName) async {
+    final result = await _runCommand(['-s', serial, 'shell', 'am', 'force-stop', packageName]);
+    return result.exitCode == 0;
+  }
+
   Future<_CmdResult> _runCommand(List<String> args) async {
     try {
       final process = await Process.run(_adbPath, args);

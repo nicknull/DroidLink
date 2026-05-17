@@ -5,12 +5,20 @@ class AppListTile extends StatelessWidget {
   final AppInfo app;
   final VoidCallback onUninstall;
   final VoidCallback onExport;
+  final VoidCallback onToggleFavorite;
+  final VoidCallback onForceStop;
+  final VoidCallback onClearData;
+  final VoidCallback onManagePermissions;
 
   const AppListTile({
     super.key,
     required this.app,
     required this.onUninstall,
     required this.onExport,
+    required this.onToggleFavorite,
+    required this.onForceStop,
+    required this.onClearData,
+    required this.onManagePermissions,
   });
 
   @override
@@ -19,9 +27,23 @@ class AppListTile extends StatelessWidget {
     final hasVersion = app.versionName.isNotEmpty || app.versionCode.isNotEmpty;
 
     return ListTile(
-      leading: CircleAvatar(
-        backgroundColor: _avatarColor(app.packageName),
-        child: Text(initial, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+      leading: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          GestureDetector(
+            onTap: onToggleFavorite,
+            child: Icon(
+              app.isFavorite ? Icons.star : Icons.star_border,
+              size: 16,
+              color: app.isFavorite ? Colors.amber : Theme.of(context).disabledColor,
+            ),
+          ),
+          const SizedBox(width: 8),
+          CircleAvatar(
+            backgroundColor: _avatarColor(app.packageName),
+            child: Text(initial, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
       ),
       title: Row(
         children: [
@@ -60,13 +82,21 @@ class AppListTile extends StatelessWidget {
       isThreeLine: app.size > 0,
       trailing: PopupMenuButton(
         itemBuilder: (_) => [
+          const PopupMenuItem(value: 'force_stop', child: Text('强制停止')),
+          const PopupMenuItem(value: 'clear_data', child: Text('清除数据')),
+          const PopupMenuItem(value: 'permissions', child: Text('权限管理')),
           const PopupMenuItem(value: 'export', child: Text('导出 APK')),
           if (!app.isSystem)
             const PopupMenuItem(value: 'uninstall', child: Text('卸载')),
         ],
         onSelected: (value) {
-          if (value == 'uninstall') onUninstall();
-          if (value == 'export') onExport();
+          switch (value) {
+            case 'force_stop': onForceStop();
+            case 'clear_data': onClearData();
+            case 'permissions': onManagePermissions();
+            case 'export': onExport();
+            case 'uninstall': onUninstall();
+          }
         },
       ),
     );

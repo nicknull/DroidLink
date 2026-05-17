@@ -11,6 +11,7 @@ class AppManagerViewModel extends ChangeNotifier {
   final AdbService _adb;
   final String _serial;
   Map<String, String> _labelCache = {}; // 本地缓存的 packageName → label
+  Set<String> _favoritePkgNames = {}; // 收藏的包名集合
 
   List<AppInfo> _userApps = [];
   List<AppInfo> _systemApps = [];
@@ -31,12 +32,22 @@ class AppManagerViewModel extends ChangeNotifier {
   bool get hasAapt => _adb.hasAapt;
 
   List<AppInfo> get filteredApps {
-    if (_searchQuery.isEmpty) return apps;
-    return apps
-        .where((a) =>
-            a.packageName.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-            a.displayLabel.toLowerCase().contains(_searchQuery.toLowerCase()))
-        .toList();
+    final list = (_searchQuery.isEmpty
+        ? apps
+        : apps
+            .where((a) =>
+                a.packageName.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+                a.displayLabel.toLowerCase().contains(_searchQuery.toLowerCase()))
+    ).toList();
+    _sortWithFavorites(list);
+    return list;
+  }
+
+  void _sortWithFavorites(List<AppInfo> list) {
+    list.sort((a, b) {
+      if (a.isFavorite != b.isFavorite) return a.isFavorite ? -1 : 1;
+      return a.displayLabel.toLowerCase().compareTo(b.displayLabel.toLowerCase());
+    });
   }
 
   void setSearch(String query) {
@@ -56,6 +67,7 @@ class AppManagerViewModel extends ChangeNotifier {
 
     // 加载本地缓存
     await _loadLabelCache();
+    await _loadFavorites();
 
     try {
       final output = await _adb.getPackages(_serial, includeSystem: true);
@@ -71,6 +83,10 @@ class AppManagerViewModel extends ChangeNotifier {
         if (label != null) {
           info = info.copyWith(label: label);
         }
+        // 标记收藏
+        if (_favoritePkgNames.contains(info.packageName)) {
+          info.isFavorite = true;
+        }
         final isSystem = info.apkPath.contains('/system/') ||
             info.apkPath.contains('/vendor/') ||
             info.apkPath.contains('/system_ext/') ||
@@ -82,8 +98,8 @@ class AppManagerViewModel extends ChangeNotifier {
         }
       }
 
-      userApps.sort((a, b) => a.displayLabel.toLowerCase().compareTo(b.displayLabel.toLowerCase()));
-      systemApps.sort((a, b) => a.displayLabel.toLowerCase().compareTo(b.displayLabel.toLowerCase()));
+      _sortWithFavorites(userApps);
+      _sortWithFavorites(systemApps);
       _userApps = userApps;
       _systemApps = systemApps;
     } catch (e) {
@@ -154,10 +170,83 @@ class AppManagerViewModel extends ChangeNotifier {
 
   void _updateApp(AppInfo updated) {
     final idx = _userApps.indexWhere((a) => a.packageName == updated.packageName);
-    if (idx != -1) _userApps[idx] = updated;
+    if (idx != -1) {
+      _userApps[idx] = updated;
+      _sortWithFavorites(_userApps);
+    }
     final sidx = _systemApps.indexWhere((a) => a.packageName == updated.packageName);
-    if (sidx != -1) _systemApps[sidx] = updated;
+    if (sidx != -1) {
+      _systemApps[sidx] = updated;
+      _sortWithFavorites(_systemApps);
+    }
   }
+
+  // ============ 收藏功能 ============
+
+  Future<File> _favoritesFile() async {
+    final dir = await getApplicationSupportDirectory();
+    return File(p.join(dir.path, 'favorite_apps.json'));
+  }
+
+  Future<void> _loadFavorites() async {
+    try {
+      final file = await _favoritesFile();
+      if (await file.exists()) {
+        final json = jsonDecode(await file.readAsString()) as List;
+        _favoritePkgNames = json.map((e) => e.toString()).toSet();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveFavorites() async {
+    try {
+      final file = await _favoritesFile();
+      await file.parent.create(recursive: true);
+      await file.writeAsString(jsonEncode(_favoritePkgNames.toList()));
+    } catch (_) {}
+  }
+
+  void toggleFavorite(String packageName) {
+    final list = _showSystem ? _systemApps : _userApps;
+    final idx = list.indexWhere((a) => a.packageName == packageName);
+    if (idx == -1) return;
+
+    final app = list[idx];
+    final newFavorite = !app.isFavorite;
+    list[idx] = app.copyWith(isFavorite: newFavorite);
+
+    if (newFavorite) {
+      _favoritePkgNames.add(packageName);
+    } else {
+      _favoritePkgNames.remove(packageName);
+    }
+    _saveFavorites();
+    notifyListeners();
+  }
+
+  // ============ 权限管理 ============
+
+  Future<List<String>> getAppPermissions(String packageName) async {
+    return _adb.getAppPermissions(_serial, packageName);
+  }
+
+  Future<bool> grantPermission(String packageName, String permission) async {
+    return _adb.grantPermission(_serial, packageName, permission);
+  }
+
+  Future<bool> revokePermission(String packageName, String permission) async {
+    return _adb.revokePermission(_serial, packageName, permission);
+  }
+
+  Future<bool> clearAppData(String packageName) async {
+    return _adb.clearAppData(_serial, packageName);
+  }
+
+  Future<bool> forceStopApp(String packageName) async {
+    return _adb.forceStopApp(_serial, packageName);
+  }
+
+  // ============ 缓存 ============
 
   Future<File> _cacheFile() async {
     final dir = await getApplicationSupportDirectory();
