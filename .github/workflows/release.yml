@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.27.0'
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build macOS
+        run: flutter build macos --release
+
+      - name: Package macOS app
+        run: |
+          cd build/macos/Build/Products/Release
+          zip -r "$GITHUB_WORKSPACE/DroidLink-macOS.zip" DroidLink.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DroidLink-macOS
+          path: DroidLink-macOS.zip
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.27.0'
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Windows
+        run: flutter build windows --release
+
+      - name: Package Windows app
+        working-directory: build/windows/x64/runner/Release
+        run: Compress-Archive -Path * -DestinationPath "$env:GITHUB_WORKSPACE\DroidLink-Windows.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DroidLink-Windows
+          path: DroidLink-Windows.zip
+
+  release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            DroidLink-macOS/DroidLink-macOS.zip
+            DroidLink-Windows/DroidLink-Windows.zip
+          generate_release_notes: true

@@ -1,0 +1,92 @@
+platform :osx, '10.15'
+
+# CocoaPods analytics sends network stats synchronously affecting flutter build latency.
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+project 'Runner', {
+  'Debug' => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+
+def flutter_root
+  generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'ephemeral', 'Flutter-Generated.xcconfig'), __FILE__)
+  unless File.exist?(generated_xcode_build_settings_path)
+    raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure \"flutter pub get\" is executed first"
+  end
+
+  File.foreach(generated_xcode_build_settings_path) do |line|
+    matches = line.match(/FLUTTER_ROOT\=(.*)/)
+    return matches[1].strip if matches
+  end
+  raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Flutter-Generated.xcconfig, then run \"flutter pub get\""
+end
+
+require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+
+flutter_macos_podfile_setup
+
+target 'Runner' do
+  use_frameworks!
+  use_modular_headers!
+
+  flutter_install_all_macos_pods File.dirname(File.realpath(__FILE__))
+  target 'RunnerTests' do
+    inherit! :search_paths
+  end
+end
+
+post_install do |installer|
+  # 1. 修复 Pod 目标的设置
+  installer.pods_project.targets.each do |target|
+    flutter_additional_macos_build_settings(target)
+    target.build_configurations.each do |config|
+      # 去重预处理宏，防止重复定义
+      defs = config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] || ['$(inherited)']
+      defs = defs.reject { |d| d == 'POD_CONFIGURATION_DEBUG=1' }
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = defs
+
+      # 抑制宏重定义警告
+      config.build_settings['OTHER_CFLAGS'] ||= ['$(inherited)']
+      config.build_settings['OTHER_CFLAGS'] << '-Wno-macro-redefined'
+    end
+  end
+
+  # 2. 修复 Runner 目标的设置：添加预编译脚本清理过期模块缓存
+  installer.aggregate_targets.each do |aggregate_target|
+    aggregate_target.user_project.targets.each do |target|
+      next unless target.name == 'Runner'
+
+      phase_name = 'Clear Stale Module Cache'
+      unless target.shell_script_build_phases.any? { |p| p.name == phase_name }
+        phase = target.new_shell_script_build_phase(phase_name)
+        phase.shell_script = 'rm -rf "${BUILD_DIR}/Intermediates.noindex/SwiftExplicitPrecompiledModules" "${BUILD_DIR}/../ModuleCache.noindex"'
+        phases = target.shell_script_build_phases
+        if phases.count > 1
+          current_index = phases.index(phase)
+          target.build_phases.move(phase, 1) if current_index && current_index > 1
+        end
+      end
+
+      # 禁用显式模块（避免 .pcm 缓存不一致问题）
+      target.build_configurations.each do |config|
+        config.build_settings['CLANG_ENABLE_EXPLICIT_MODULES'] = 'NO'
+      end
+    end
+    aggregate_target.user_project.save
+  end
+
+  # 3. 直接从 Pods.xcodeproj 中删除 POD_CONFIGURATION 定义（根因修复）
+  # post_install 内 pods_project 可能未刷盘，使用 at_exit 延迟到 pod install 完全结束后执行
+  at_exit do
+    pods_pbxproj = File.join(installer.pods_project.path, 'project.pbxproj')
+    if File.exist?(pods_pbxproj)
+      content = File.read(pods_pbxproj)
+      new_content = content.gsub(/^\t*"POD_CONFIGURATION_\w+=1",?\n?/, '')
+      if content != new_content
+        File.write(pods_pbxproj, new_content)
+        puts "Removed POD_CONFIGURATION definitions from Pods.xcodeproj"
+      end
+    end
+  end
+end

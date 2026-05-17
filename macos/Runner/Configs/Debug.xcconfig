@@ -1,0 +1,5 @@
+#include "../../Flutter/Flutter-Debug.xcconfig"
+#include "Warnings.xcconfig"
+
+// 抑制 media_kit 预编译框架的 POD_CONFIGURATION_DEBUG 宏重复定义警告
+OTHER_CFLAGS = $(inherited) -Wno-macro-redefined
