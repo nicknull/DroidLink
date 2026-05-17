@@ -455,6 +455,20 @@ class AdbService {
     return result.exitCode == 0;
   }
 
+  /// 构建 scrcpy 所需的环境变量（注入已知工具路径）
+  Map<String, String> _scrcpyEnv() {
+    final env = Map<String, String>.from(Platform.environment);
+    if (Platform.isMacOS) {
+      final extraDirs = ['/opt/homebrew/bin', '/usr/local/bin'];
+      final currentPath = env['PATH'] ?? '';
+      final missing = extraDirs.where((d) => !currentPath.contains(d));
+      if (missing.isNotEmpty) {
+        env['PATH'] = '${missing.join(':')}:$currentPath';
+      }
+    }
+    return env;
+  }
+
   /// 使用 scrcpy 录屏（无窗口模式）
   /// 返回 Process 对象，调用 kill() 停止录制
   Future<Process> startScrcpyRecord(String serial, String localPath) async {
@@ -462,6 +476,7 @@ class AdbService {
     return Process.start(
       _scrcpyPath!,
       ['--no-window', '--serial', serial, '--record', localPath],
+      environment: _scrcpyEnv(),
     );
   }
 
@@ -471,6 +486,7 @@ class AdbService {
     await Process.start(
       _scrcpyPath!,
       ['--serial', serial, '--always-on-top'],
+      environment: _scrcpyEnv(),
     );
   }
 
