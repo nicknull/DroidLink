@@ -247,7 +247,7 @@ class _HomeViewState extends State<HomeView> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('版本：0.0.2'),
+            Text('版本：0.0.1'),
             SizedBox(height: 8),
             Text('Android 设备桌面管理工具'),
             SizedBox(height: 16),
