@@ -23,8 +23,9 @@ jobs:
 
       - name: Package macOS app
         run: |
-          cd build/macos/Build/Products/Release
-          zip -r "$GITHUB_WORKSPACE/DroidLink-macOS.zip" DroidLink.app
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/macos/Build/Products/Release/DroidLink.app \
+            "$GITHUB_WORKSPACE/DroidLink-macOS.zip"
 
       - uses: actions/upload-artifact@v4
         with:
