@@ -505,19 +505,23 @@ class AdbService {
   /// 获取应用的已授权权限列表
   Future<List<String>> getAppPermissions(String serial, String packageName) async {
     final output = await shell(serial, 'dumpsys package $packageName');
-    final permissions = <String>[];
-    bool inGrantedSection = false;
+    final permissions = <String>{};
     for (final line in output.split('\n')) {
       final trimmed = line.trim();
+      // 匹配多种 granted=true 格式:
+      // android.permission.CAMERA: granted=true
+      // android.permission.CAMERA, granted=true
       if (trimmed.contains('granted=true')) {
-        // 格式: android.permission.WRITE_EXTERNAL_STORAGE, granted=true
-        final perm = trimmed.split(',').first.trim();
+        var perm = trimmed
+            .split(RegExp(r'[,:]'))
+            .first
+            .trim();
         if (perm.startsWith('android.permission.')) {
           permissions.add(perm);
         }
       }
     }
-    return permissions;
+    return permissions.toList()..sort();
   }
 
   /// 授予权限

@@ -260,12 +260,6 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
     }
   }
 
-  String _permDisplayName(String perm) {
-    final chinese = kPermissionNames[perm];
-    if (chinese != null) return '$chinese\n${perm.replaceFirst('android.permission.', '')}';
-    return perm.replaceFirst('android.permission.', '');
-  }
-
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -283,9 +277,15 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
                       final perm = _permissions[index];
                       return SwitchListTile(
                         title: Text(
-                          _permDisplayName(perm),
+                          kPermissionNames[perm] ?? perm.replaceFirst('android.permission.', ''),
                           style: const TextStyle(fontSize: 13),
                         ),
+                        subtitle: kPermissionNames[perm] != null
+                            ? Text(
+                                perm.replaceFirst('android.permission.', ''),
+                                style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.outline),
+                              )
+                            : null,
                         value: true,
                         onChanged: (value) async {
                           if (!value) {
