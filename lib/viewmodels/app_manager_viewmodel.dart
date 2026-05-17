@@ -226,7 +226,7 @@ class AppManagerViewModel extends ChangeNotifier {
 
   // ============ 权限管理 ============
 
-  Future<List<String>> getAppPermissions(String packageName) async {
+  Future<Map<String, bool>> getAppPermissions(String packageName) async {
     return _adb.getAppPermissions(_serial, packageName);
   }
 

@@ -241,7 +241,7 @@ class _PermissionsDialog extends StatefulWidget {
 }
 
 class _PermissionsDialogState extends State<_PermissionsDialog> {
-  List<String> _permissions = [];
+  Map<String, bool> _permissions = {};
   bool _loading = true;
 
   @override
@@ -254,7 +254,12 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
     final perms = await widget.vm.getAppPermissions(widget.packageName);
     if (mounted) {
       setState(() {
-        _permissions = perms..sort();
+        _permissions = Map.fromEntries(
+          perms.entries.toList()..sort((a, b) {
+            if (a.value != b.value) return a.value ? -1 : 1;
+            return a.key.compareTo(b.key);
+          }),
+        );
         _loading = false;
       });
     }
@@ -270,11 +275,12 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
         child: _loading
             ? const Center(child: CircularProgressIndicator())
             : _permissions.isEmpty
-                ? const Center(child: Text('没有已授权的权限'))
+                ? const Center(child: Text('没有运行时权限'))
                 : ListView.builder(
                     itemCount: _permissions.length,
                     itemBuilder: (context, index) {
-                      final perm = _permissions[index];
+                      final perm = _permissions.keys.elementAt(index);
+                      final granted = _permissions[perm]!;
                       final hasChinese = kPermissionNames.containsKey(perm);
                       return SwitchListTile(
                         title: Text(
@@ -287,13 +293,16 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
                                 style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.outline),
                               )
                             : null,
-                        value: true,
+                        value: granted,
                         onChanged: (value) async {
-                          if (!value) {
-                            final ok = await widget.vm.revokePermission(widget.packageName, perm);
-                            if (ok && mounted) {
-                              setState(() => _permissions.remove(perm));
-                            }
+                          bool ok;
+                          if (value) {
+                            ok = await widget.vm.grantPermission(widget.packageName, perm);
+                          } else {
+                            ok = await widget.vm.revokePermission(widget.packageName, perm);
+                          }
+                          if (ok && mounted) {
+                            setState(() => _permissions[perm] = value);
                           }
                         },
                       );

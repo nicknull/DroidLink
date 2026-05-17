@@ -502,24 +502,32 @@ class AdbService {
     return shell(serial, 'wm size');
   }
 
-  /// 获取应用的已授权权限列表
-  Future<List<String>> getAppPermissions(String serial, String packageName) async {
+  /// 获取应用的运行时权限（与系统设置中显示一致）
+  /// 返回 Map<权限名, 是否已授权>
+  Future<Map<String, bool>> getAppPermissions(String serial, String packageName) async {
     final output = await shell(serial, 'dumpsys package $packageName');
-    final permissions = <String>{};
+    final permissions = <String, bool>{};
+    bool inRuntime = false;
     for (final line in output.split('\n')) {
       final trimmed = line.trim();
-      if (trimmed.contains('granted=true')) {
-        var perm = trimmed
-            .split(RegExp(r'[,:]'))
-            .first
-            .trim();
-        // 过滤掉非权限行（如 flags 等）
-        if (perm.contains('.') && !perm.contains(' ') && perm.length > 5) {
-          permissions.add(perm);
+      if (trimmed == 'runtime permissions:') {
+        inRuntime = true;
+        continue;
+      }
+      if (inRuntime) {
+        // 遇到非权限行（如 enabledComponents:）结束
+        if (!trimmed.contains('granted=')) {
+          inRuntime = false;
+          continue;
+        }
+        final granted = trimmed.contains('granted=true');
+        final perm = trimmed.split(':').first.trim();
+        if (perm.contains('.')) {
+          permissions[perm] = granted;
         }
       }
     }
-    return permissions.toList()..sort();
+    return permissions;
   }
 
   /// 授予权限
