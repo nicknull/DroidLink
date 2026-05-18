@@ -17,11 +17,9 @@ class _SplashViewState extends State<SplashView> with SingleTickerProviderStateM
   late StartupChecker _checker;
   List<ToolCheckItem> _items = [];
   bool _checking = true;
-  bool _showInstallGuide = false;
 
   // 安装状态
-  final Map<String, bool> _installing = {};
-  final Map<String, String> _installLog = {};
+  final Map<String, _InstallState> _installStates = {};
 
   late AnimationController _logoController;
   late Animation<double> _logoScale;
@@ -62,11 +60,8 @@ class _SplashViewState extends State<SplashView> with SingleTickerProviderStateM
     });
 
     if (result.allRequiredReady) {
-      // 全部必须工具就绪，延迟后进入主界面
-      await Future.delayed(const Duration(milliseconds: 1200));
+      await Future.delayed(const Duration(milliseconds: 800));
       if (mounted) widget.onReady();
-    } else {
-      setState(() => _showInstallGuide = true);
     }
   }
 
@@ -76,6 +71,9 @@ class _SplashViewState extends State<SplashView> with SingleTickerProviderStateM
     final isDark = theme.brightness == Brightness.dark;
     final bgColor = isDark ? const Color(0xFF1A1A2E) : const Color(0xFFF0F4FF);
     final cardColor = isDark ? const Color(0xFF252542) : Colors.white;
+
+    final missingItems = _items.where((i) => i.status != ToolStatus.available).toList();
+    final allReady = _items.every((i) => i.status == ToolStatus.available);
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -127,13 +125,16 @@ class _SplashViewState extends State<SplashView> with SingleTickerProviderStateM
                 // 检测结果列表
                 ..._items.map((item) => _buildCheckItem(item, theme, cardColor)),
 
-                // 底部操作区
-                if (!_checking) ...[
-                  const SizedBox(height: 32),
-                  if (_showInstallGuide)
-                    _buildInstallGuide(theme, cardColor)
-                  else
-                    _buildEnterButton(theme),
+                // 全部就绪 → 自动进入
+                if (!_checking && allReady) ...[
+                  const SizedBox(height: 24),
+                  const Text('所有工具已就绪', style: TextStyle(color: Colors.green, fontSize: 14)),
+                ],
+
+                // 有缺失 → 安装引导
+                if (!_checking && missingItems.isNotEmpty) ...[
+                  const SizedBox(height: 24),
+                  _buildInstallSection(missingItems, theme, cardColor),
                 ],
               ],
             ),
@@ -144,23 +145,8 @@ class _SplashViewState extends State<SplashView> with SingleTickerProviderStateM
   }
 
   Widget _buildCheckItem(ToolCheckItem item, ThemeData theme, Color cardColor) {
-    final iconColor = item.checking
-        ? Colors.grey
-        : item.available
-            ? Colors.green
-            : item.required
-                ? Colors.red
-                : Colors.orange;
-
-    final icon = item.checking
-        ? SizedBox(
-            width: 20, height: 20,
-            child: CircularProgressIndicator(strokeWidth: 2, color: iconColor),
-          )
-        : Icon(
-            item.available ? Icons.check_circle : (item.required ? Icons.cancel : Icons.warning),
-            color: iconColor, size: 20,
-          );
+    final statusColor = _statusColor(item);
+    final statusIcon = _statusIcon(item);
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -169,51 +155,26 @@ class _SplashViewState extends State<SplashView> with SingleTickerProviderStateM
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(10),
-          side: BorderSide(color: iconColor.withValues(alpha: 0.3), width: 1),
+          side: BorderSide(color: statusColor.withValues(alpha: 0.3), width: 1),
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
             children: [
-              Text(item.icon, style: const TextStyle(fontSize: 20)),
+              Icon(IconData(item.iconCodePoint, fontFamily: 'MaterialIcons'), size: 20, color: statusColor),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Text(item.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-                        if (item.required) ...[
-                          const SizedBox(width: 6),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: Colors.red.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: const Text('必须', style: TextStyle(fontSize: 10, color: Colors.red)),
-                          ),
-                        ] else ...[
-                          const SizedBox(width: 6),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: Colors.orange.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: const Text('可选', style: TextStyle(fontSize: 10, color: Colors.orange)),
-                          ),
-                        ],
-                      ],
-                    ),
+                    Text(item.name, style: const TextStyle(fontWeight: FontWeight.w600)),
                     const SizedBox(height: 2),
                     Text(item.description, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
                   ],
                 ),
               ),
               const SizedBox(width: 8),
-              icon,
+              statusIcon,
             ],
           ),
         ),
@@ -221,43 +182,44 @@ class _SplashViewState extends State<SplashView> with SingleTickerProviderStateM
     );
   }
 
-  Widget _buildInstallGuide(ThemeData theme, Color cardColor) {
-    final missing = _items.where((i) => !i.available).toList();
-    final allRequiredReady = _items.where((i) => i.required).every((i) => i.available);
+  Color _statusColor(ToolCheckItem item) {
+    switch (item.status) {
+      case ToolStatus.available: return Colors.green;
+      case ToolStatus.missing: return Colors.red;
+      case ToolStatus.checking: return Colors.grey;
+      case ToolStatus.pending: return Colors.grey;
+    }
+  }
 
+  Widget _statusIcon(ToolCheckItem item) {
+    switch (item.status) {
+      case ToolStatus.checking:
+        return SizedBox(
+          width: 20, height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.grey[400]),
+        );
+      case ToolStatus.available:
+        return const Icon(Icons.check_circle, color: Colors.green, size: 20);
+      case ToolStatus.missing:
+        return const Icon(Icons.cancel, color: Colors.red, size: 20);
+      case ToolStatus.pending:
+        return Icon(Icons.circle_outlined, color: Colors.grey[300], size: 20);
+    }
+  }
+
+  Widget _buildInstallSection(List<ToolCheckItem> missingItems, ThemeData theme, Color cardColor) {
     return Column(
       children: [
-        // 缺失工具的安装卡片
-        ...missing.map((item) => _buildInstallCard(item, theme, cardColor)),
-        const SizedBox(height: 16),
-        // 跳过按钮（所有必须工具就绪时可用）
-        if (allRequiredReady)
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: widget.onReady,
-              icon: const Icon(Icons.arrow_forward),
-              label: const Text('进入应用'),
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-              ),
-            ),
-          )
-        else
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Text(
-              '请先安装必须的工具 (ADB) 后再继续',
-              style: TextStyle(color: Colors.red[400], fontSize: 13),
-            ),
-          ),
+        for (final item in missingItems) _buildInstallCard(item, cardColor),
       ],
     );
   }
 
-  Widget _buildInstallCard(ToolCheckItem item, ThemeData theme, Color cardColor) {
-    final isInstalling = _installing[item.id] == true;
-    final log = _installLog[item.id] ?? '';
+  Widget _buildInstallCard(ToolCheckItem item, Color cardColor) {
+    final state = _installStates[item.id];
+    final isInstalling = state?.installing == true;
+    final log = state?.log ?? '';
+    final hasError = state?.error == true;
 
     return Card(
       color: cardColor,
@@ -271,30 +233,40 @@ class _SplashViewState extends State<SplashView> with SingleTickerProviderStateM
           children: [
             Row(
               children: [
-                Text(item.icon, style: const TextStyle(fontSize: 22)),
+                Icon(IconData(item.iconCodePoint, fontFamily: 'MaterialIcons'), size: 22, color: Colors.blue),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('安装 ${item.name}', style: const TextStyle(fontWeight: FontWeight.w600)),
-                      if (item.installHint != null)
-                        Text(item.installHint!, style: TextStyle(fontSize: 11, color: Colors.grey[500], fontFamily: 'monospace')),
-                    ],
+                  child: Text(
+                    isInstalling ? '正在安装 ${item.name}...' : hasError ? '${item.name} 安装失败' : '安装 ${item.name}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: hasError ? Colors.red : null,
+                    ),
                   ),
                 ),
-                if (!isInstalling && item.installHint == null)
-                  Text('请手动安装', style: TextStyle(fontSize: 12, color: Colors.grey[500])),
-                if (!isInstalling && item.installHint != null)
-                  FilledButton.tonal(
-                    onPressed: () => _installTool(item),
-                    child: const Text('安装'),
-                  ),
+                if (!isInstalling)
+                  hasError
+                      ? FilledButton.tonal(
+                          onPressed: () => _installTool(item),
+                          child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                            Icon(Icons.refresh, size: 18),
+                            SizedBox(width: 6),
+                            Text('重试'),
+                          ]),
+                        )
+                      : FilledButton.tonal(
+                          onPressed: () => _installTool(item),
+                          child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                            Icon(Icons.download, size: 18),
+                            SizedBox(width: 6),
+                            Text('安装'),
+                          ]),
+                        ),
                 if (isInstalling)
                   const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
               ],
             ),
-            if (log.isNotEmpty) ...[
+            if (isInstalling || log.isNotEmpty) ...[
               const SizedBox(height: 10),
               Container(
                 width: double.infinity,
@@ -309,6 +281,12 @@ class _SplashViewState extends State<SplashView> with SingleTickerProviderStateM
                 ),
               ),
             ],
+            if (isInstalling) ...[
+              const SizedBox(height: 10),
+              LinearProgressIndicator(
+                backgroundColor: Colors.grey.withValues(alpha: 0.2),
+              ),
+            ],
           ],
         ),
       ),
@@ -317,52 +295,71 @@ class _SplashViewState extends State<SplashView> with SingleTickerProviderStateM
 
   Future<void> _installTool(ToolCheckItem item) async {
     setState(() {
-      _installing[item.id] = true;
-      _installLog[item.id] = '';
+      _installStates[item.id] = _InstallState();
     });
 
     final logBuffer = StringBuffer();
-    await for (final line in widget.adb.installTool(item.id)) {
-      logBuffer.write(line);
-      if (mounted) {
-        setState(() => _installLog[item.id] = logBuffer.toString());
+    Stream<InstallEvent> eventStream;
+
+    if (item.id == 'homebrew') {
+      eventStream = widget.adb.installHomebrew();
+    } else {
+      eventStream = widget.adb.installTool(item.id);
+    }
+
+    await for (final event in eventStream) {
+      if (!mounted) return;
+      switch (event.type) {
+        case InstallEventType.log:
+          logBuffer.write(event.message);
+          setState(() {
+            _installStates[item.id] = _InstallState(
+              installing: true,
+              log: logBuffer.toString(),
+            );
+          });
+        case InstallEventType.success:
+          logBuffer.write(event.message);
+          setState(() {
+            _installStates[item.id] = _InstallState(
+              log: logBuffer.toString(),
+            );
+          });
+        case InstallEventType.error:
+          logBuffer.write(event.message);
+          setState(() {
+            _installStates[item.id] = _InstallState(
+              log: logBuffer.toString(),
+              error: true,
+            );
+          });
       }
     }
 
     if (!mounted) return;
 
-    // 重新检测该工具
+    // 重新检测
     await _checker.recheck(item, (items) {
       if (mounted) setState(() => _items = items);
     }, _items);
 
-    setState(() {
-      _installing[item.id] = false;
-    });
+    // 如果安装成功（状态变为 available），移除安装状态
+    if (item.status == ToolStatus.available) {
+      setState(() => _installStates.remove(item.id));
+    }
 
-    // 检查是否所有必须工具都就绪
-    final allRequiredReady = _items.where((i) => i.required).every((i) => i.available);
-    final allReady = _items.every((i) => i.available);
-
-    if (allReady) {
+    // 全部就绪 → 进入
+    if (_items.every((i) => i.status == ToolStatus.available)) {
       await Future.delayed(const Duration(milliseconds: 800));
       if (mounted) widget.onReady();
-    } else if (allRequiredReady) {
-      setState(() {}); // 更新显示跳过按钮
     }
   }
+}
 
-  Widget _buildEnterButton(ThemeData theme) {
-    return SizedBox(
-      width: double.infinity,
-      child: FilledButton.icon(
-        onPressed: widget.onReady,
-        icon: const Icon(Icons.arrow_forward),
-        label: const Text('进入应用'),
-        style: FilledButton.styleFrom(
-          padding: const EdgeInsets.symmetric(vertical: 14),
-        ),
-      ),
-    );
-  }
+class _InstallState {
+  final bool installing;
+  final String log;
+  final bool error;
+
+  _InstallState({this.installing = true, this.log = '', this.error = false});
 }

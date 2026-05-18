@@ -3,6 +3,15 @@ import 'package:path/path.dart' as p;
 import 'package:android_manager/constants/app_names.dart';
 import 'package:android_manager/services/apk_resource_parser.dart';
 
+/// 安装事件类型
+enum InstallEventType { log, success, error }
+
+class InstallEvent {
+  final InstallEventType type;
+  final String message;
+  const InstallEvent(this.type, this.message);
+}
+
 class DeviceEntry {
   final String serial;
   final bool isAuthorized;
@@ -35,6 +44,23 @@ class AdbService {
   String? _scrcpyPath;
   bool get hasScrcpy => _scrcpyPath != null;
   String? get scrcpyPath => _scrcpyPath;
+
+  /// 查找 Homebrew 路径，找不到返回 null
+  static String? findBrew() {
+    if (!Platform.isMacOS) return null;
+    for (final path in ['/opt/homebrew/bin/brew', '/usr/local/bin/brew']) {
+      if (File(path).existsSync()) return path;
+    }
+    // 回退 which
+    final result = Process.runSync('which', ['brew'], runInShell: true);
+    if (result.exitCode == 0) {
+      final output = (result.stdout as String).trim();
+      if (output.isNotEmpty && File(output).existsSync()) return output;
+    }
+    return null;
+  }
+
+  bool get hasHomebrew => findBrew() != null;
 
   void _autoDetectAdb() {
     final isWindows = Platform.isWindows;
@@ -191,65 +217,78 @@ class AdbService {
     _detectScrcpy();
   }
 
-  // 安装缺失的工具，返回安装日志流
-  Stream<String> installTool(String tool) async* {
-    if (Platform.isWindows) {
-      yield 'Windows 请手动安装:\n';
-      if (tool == 'adb') {
-        yield 'ADB: https://developer.android.com/tools/releases/platform-tools\n';
-      } else {
-        yield 'scrcpy: https://github.com/Genymobile/scrcpy\n';
-      }
+  /// 安装 Homebrew（macOS）
+  Stream<InstallEvent> installHomebrew() async* {
+    if (!Platform.isMacOS) {
+      yield const InstallEvent(InstallEventType.error, '仅支持 macOS 自动安装 Homebrew');
       return;
     }
 
-    final whichCmd = Platform.isWindows ? 'where' : 'which';
-    bool hasBrew = Process.runSync(whichCmd, ['brew'], runInShell: true).exitCode == 0;
+    yield const InstallEvent(InstallEventType.log, '正在安装 Homebrew...\n');
 
-    // 打包后 PATH 可能不包含 Homebrew，检查已知路径
-    if (!hasBrew && Platform.isMacOS) {
-      hasBrew = const ['/opt/homebrew/bin/brew', '/usr/local/bin/brew']
-          .any((p) => File(p).existsSync());
+    final script = 'https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh';
+    final process = await Process.start(
+      '/bin/bash',
+      ['-c', 'NONINTERACTIVE=1 /bin/bash -c "\$(curl -fsSL $script)"'],
+      environment: {...Platform.environment, 'NONINTERACTIVE': '1'},
+      runInShell: true,
+    );
+
+    await for (final line in process.stdout.transform(const SystemEncoding().decoder)) {
+      yield InstallEvent(InstallEventType.log, line);
+    }
+    await for (final line in process.stderr.transform(const SystemEncoding().decoder)) {
+      yield InstallEvent(InstallEventType.log, line);
     }
 
-    if (Platform.isMacOS && hasBrew) {
-      yield '正在通过 Homebrew 安装 $tool...\n';
+    final exitCode = await process.exitCode;
+    if (exitCode == 0 && findBrew() != null) {
+      yield const InstallEvent(InstallEventType.success, 'Homebrew 安装成功！');
+    } else {
+      yield InstallEvent(InstallEventType.error, 'Homebrew 安装失败，退出码: $exitCode');
+    }
+  }
+
+  // 安装缺失的工具，返回结构化事件流
+  Stream<InstallEvent> installTool(String tool) async* {
+    if (Platform.isWindows) {
+      yield const InstallEvent(InstallEventType.log, 'Windows 请手动安装:\n');
+      if (tool == 'adb') {
+        yield const InstallEvent(InstallEventType.log, 'https://developer.android.com/tools/releases/platform-tools\n');
+      } else {
+        yield const InstallEvent(InstallEventType.log, 'https://github.com/Genymobile/scrcpy\n');
+      }
+      yield const InstallEvent(InstallEventType.error, '请手动安装后点击「重新检测」');
+      return;
+    }
+
+    final brewPath = findBrew();
+
+    if (Platform.isMacOS && brewPath != null) {
+      yield InstallEvent(InstallEventType.log, '正在通过 Homebrew 安装 $tool...\n');
       final package = tool == 'adb' ? 'android-platform-tools' : tool;
-      // 使用 brew 完整路径，打包后 PATH 不可靠
-      final brewPath = const ['/opt/homebrew/bin/brew', '/usr/local/bin/brew']
-          .firstWhere((p) => File(p).existsSync(), orElse: () => 'brew');
       final process = await Process.start(
         brewPath, ['install', package],
         runInShell: true,
       );
 
       await for (final line in process.stdout.transform(const SystemEncoding().decoder)) {
-        yield line;
+        yield InstallEvent(InstallEventType.log, line);
       }
       await for (final line in process.stderr.transform(const SystemEncoding().decoder)) {
-        yield line;
+        yield InstallEvent(InstallEventType.log, line);
       }
 
       final exitCode = await process.exitCode;
       if (exitCode == 0) {
-        yield '\n安装成功！\n';
-        if (tool == 'adb') {
-          _autoDetectAdb();
-        } else if (tool == 'scrcpy') {
-          _detectScrcpy();
-        }
+        if (tool == 'adb') _autoDetectAdb();
+        else if (tool == 'scrcpy') _detectScrcpy();
+        yield InstallEvent(InstallEventType.success, '$tool 安装成功！');
       } else {
-        yield '\n安装失败，退出码: $exitCode\n';
+        yield InstallEvent(InstallEventType.error, '$tool 安装失败，退出码: $exitCode');
       }
     } else if (Platform.isMacOS) {
-      yield '请先安装 Homebrew: /bin/bash -c "\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"\n';
-    } else {
-      yield '请手动安装:\n';
-      if (tool == 'adb') {
-        yield 'ADB: https://developer.android.com/tools/releases/platform-tools\n';
-      } else {
-        yield 'scrcpy: https://github.com/Genymobile/scrcpy\n';
-      }
+      yield const InstallEvent(InstallEventType.error, '需要先安装 Homebrew');
     }
   }
 

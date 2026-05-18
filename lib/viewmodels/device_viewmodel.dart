@@ -60,6 +60,7 @@ class DeviceViewModel extends ChangeNotifier {
   void recheckTools() async {
     _sub?.cancel();
     _sub = null;
+    _adb.reDetectScrcpy();
     _adbAvailable = await _adb.isAdbAvailable();
     if (_adbAvailable) {
       _sub = _monitor.deviceStream.listen((devices) {

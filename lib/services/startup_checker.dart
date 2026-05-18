@@ -1,36 +1,45 @@
 import 'dart:io';
 import 'package:android_manager/services/adb_service.dart';
 
+/// 工具检测状态
+enum ToolStatus { pending, checking, available, missing }
+
 /// 单项工具检测结果
 class ToolCheckItem {
   final String id;
   final String name;
-  final String icon;
+  final int iconCodePoint; // Material icon code point
   final bool required;
   final String description;
-  final String? installHint;
-  bool available;
-  bool checking;
+  ToolStatus status;
 
   ToolCheckItem({
     required this.id,
     required this.name,
-    required this.icon,
+    required this.iconCodePoint,
     required this.required,
     required this.description,
-    this.installHint,
-    this.available = false,
-    this.checking = true,
+    this.status = ToolStatus.pending,
   });
+}
+
+// IconData 引用 Flutter，为避免引入 UI 依赖到 service 层，
+// 改用 String 图标标识，View 层负责映射
+// 但为了简洁，直接用 Material Icons 的 codePoint
+class ToolIcons {
+  static const int adb = 0xe3af; // Icons.phone_android
+  static const int scrcpy = 0xe332; // Icons.screen_share
+  static const int homebrew = 0xe8d0; // Icons.local_cafe
 }
 
 /// 启动检测结果
 class StartupCheckResult {
   final List<ToolCheckItem> items;
-  final bool allRequiredReady;
+  bool get allRequiredReady => items.where((i) => i.required).every((i) => i.status == ToolStatus.available);
+  bool get hasHomebrew => _adb.hasHomebrew;
 
-  StartupCheckResult(this.items)
-      : allRequiredReady = items.where((i) => i.required).every((i) => i.available);
+  final AdbService _adb;
+  StartupCheckResult(this.items, this._adb);
 }
 
 /// 启动检测服务：逐项检测依赖工具
@@ -41,25 +50,33 @@ class StartupChecker {
 
   /// 定义所有需要检测的工具
   List<ToolCheckItem> buildCheckList() {
-    final items = <ToolCheckItem>[
-      ToolCheckItem(
-        id: 'adb',
-        name: 'ADB',
-        icon: '📱',
-        required: true,
-        description: 'Android 调试桥，核心通信工具',
-        installHint: Platform.isMacOS ? 'brew install android-platform-tools' : null,
-      ),
-    ];
+    final items = <ToolCheckItem>[];
 
-    // scrcpy 非必须但推荐
+    // macOS: 检测 Homebrew
+    if (Platform.isMacOS) {
+      items.add(ToolCheckItem(
+        id: 'homebrew',
+        name: 'Homebrew',
+        iconCodePoint: ToolIcons.homebrew,
+        required: false,
+        description: 'macOS 包管理器，用于自动安装其他工具',
+      ));
+    }
+
+    items.add(ToolCheckItem(
+      id: 'adb',
+      name: 'ADB',
+      iconCodePoint: ToolIcons.adb,
+      required: true,
+      description: 'Android 调试桥，核心通信工具',
+    ));
+
     items.add(ToolCheckItem(
       id: 'scrcpy',
       name: 'scrcpy',
-      icon: '🖥️',
+      iconCodePoint: ToolIcons.scrcpy,
       required: false,
       description: '投屏与录屏工具（缺失时无法使用投屏功能）',
-      installHint: Platform.isMacOS ? 'brew install scrcpy' : null,
     ));
 
     return items;
@@ -71,46 +88,48 @@ class StartupChecker {
     onUpdate(List.from(items));
 
     for (int i = 0; i < items.length; i++) {
-      items[i].checking = true;
+      items[i].status = ToolStatus.checking;
       onUpdate(List.from(items));
 
       switch (items[i].id) {
+        case 'homebrew':
+          items[i].status = _adb.hasHomebrew ? ToolStatus.available : ToolStatus.missing;
+          break;
         case 'adb':
-          items[i].available = await _adb.isAdbAvailable();
+          items[i].status = await _adb.isAdbAvailable() ? ToolStatus.available : ToolStatus.missing;
           break;
         case 'scrcpy':
-          items[i].available = _adb.hasScrcpy;
+          items[i].status = _adb.hasScrcpy ? ToolStatus.available : ToolStatus.missing;
           break;
       }
 
-      items[i].checking = false;
       onUpdate(List.from(items));
-
-      // 项之间稍作间隔，让动画更自然
       if (i < items.length - 1) {
         await Future.delayed(const Duration(milliseconds: 300));
       }
     }
 
-    return StartupCheckResult(items);
+    return StartupCheckResult(items, _adb);
   }
 
   /// 重新检测指定工具
   Future<void> recheck(ToolCheckItem item, void Function(List<ToolCheckItem>) onUpdate, List<ToolCheckItem> allItems) async {
-    item.checking = true;
+    item.status = ToolStatus.checking;
     onUpdate(List.from(allItems));
 
     switch (item.id) {
+      case 'homebrew':
+        item.status = _adb.hasHomebrew ? ToolStatus.available : ToolStatus.missing;
+        break;
       case 'adb':
-        item.available = await _adb.isAdbAvailable();
+        item.status = await _adb.isAdbAvailable() ? ToolStatus.available : ToolStatus.missing;
         break;
       case 'scrcpy':
         _adb.reDetectScrcpy();
-        item.available = _adb.hasScrcpy;
+        item.status = _adb.hasScrcpy ? ToolStatus.available : ToolStatus.missing;
         break;
     }
 
-    item.checking = false;
     onUpdate(List.from(allItems));
   }
 }

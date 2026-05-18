@@ -15,10 +15,6 @@ class HomeView extends StatefulWidget {
 }
 
 class _HomeViewState extends State<HomeView> {
-  bool _installing = false;
-  String _installLog = '';
-  String? _installingTool;
-
   @override
   Widget build(BuildContext context) {
     final vm = context.watch<DeviceViewModel>();
@@ -34,6 +30,15 @@ class _HomeViewState extends State<HomeView> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
+                  if (!vm.adbAvailable || !vm.adb.hasScrcpy)
+                    IconButton(
+                      icon: Badge(
+                        isLabelVisible: true,
+                        child: Icon(Icons.build_outlined, size: 20, color: !vm.adbAvailable ? Colors.red : Colors.orange),
+                      ),
+                      tooltip: '工具检测',
+                      onPressed: () => _showToolStatus(context, vm),
+                    ),
                   IconButton(
                     icon: const Icon(Icons.info_outline),
                     tooltip: '关于',
@@ -70,7 +75,7 @@ class _HomeViewState extends State<HomeView> {
           const VerticalDivider(width: 1),
           Expanded(
             child: !vm.adbAvailable
-                ? _buildSetupHint(context, vm)
+                ? const _NoToolHint()
                 : vm.selectedDevice == null
                     ? const _NoDeviceHint()
                     : IndexedStack(
@@ -92,22 +97,6 @@ class _HomeViewState extends State<HomeView> {
     return Column(
       children: [
         const SizedBox(height: 12),
-        if (!vm.adbAvailable)
-          Tooltip(
-            message: 'ADB 未安装',
-            child: IconButton(
-              icon: const Icon(Icons.error_outline, color: Colors.red, size: 20),
-              onPressed: () => _installTool(context, vm, 'adb'),
-            ),
-          ),
-        if (vm.adbAvailable && !vm.adb.hasScrcpy)
-          Tooltip(
-            message: 'scrcpy 未安装（录屏/投屏需要）',
-            child: IconButton(
-              icon: const Icon(Icons.warning_amber, color: Colors.orange, size: 20),
-              onPressed: () => _installTool(context, vm, 'scrcpy'),
-            ),
-          ),
         if (vm.devices.isNotEmpty)
           PopupMenuButton(
             tooltip: '切换设备',
@@ -162,74 +151,48 @@ class _HomeViewState extends State<HomeView> {
     );
   }
 
-  Widget _buildSetupHint(BuildContext context, DeviceViewModel vm) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.download_outlined, size: 64, color: Colors.blue),
-          const SizedBox(height: 16),
-          Text('需要安装必要工具', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 16),
-          if (!vm.adbAvailable)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: FilledButton.icon(
-                onPressed: _installing ? null : () => _installTool(context, vm, 'adb'),
-                icon: const Icon(Icons.download),
-                label: const Text('安装 ADB (必需)'),
-              ),
-            ),
-          if (vm.adbAvailable && !vm.adb.hasScrcpy)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: OutlinedButton.icon(
-                onPressed: _installing ? null : () => _installTool(context, vm, 'scrcpy'),
-                icon: const Icon(Icons.download),
-                label: const Text('安装 scrcpy (录屏/投屏)'),
-              ),
-            ),
-          if (_installing) ...[
-            const SizedBox(height: 16),
-            const CircularProgressIndicator(),
+  void _showToolStatus(BuildContext context, DeviceViewModel vm) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('工具状态'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _toolRow('ADB', vm.adbAvailable),
             const SizedBox(height: 8),
-            Text('正在安装 $_installingTool...', style: Theme.of(context).textTheme.bodySmall),
+            _toolRow('scrcpy', vm.adb.hasScrcpy),
+            const SizedBox(height: 16),
+            Text(
+              '缺失工具请重启应用，在启动页完成安装',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
           ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () { Navigator.pop(ctx); vm.recheckTools(); },
+            child: const Text('重新检测'),
+          ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
         ],
       ),
     );
   }
 
-  Future<void> _installTool(BuildContext context, DeviceViewModel vm, String tool) async {
-    if (_installing) return;
-    setState(() {
-      _installing = true;
-      _installingTool = tool;
-      _installLog = '';
-    });
-
-    final logBuffer = StringBuffer();
-    try {
-      await for (final line in vm.adb.installTool(tool)) {
-        logBuffer.write(line);
-        if (mounted) setState(() => _installLog = logBuffer.toString());
-      }
-    } catch (e) {
-      logBuffer.write('\n安装出错: $e');
-    }
-
-    if (mounted) {
-      setState(() {
-        _installing = false;
-        _installingTool = null;
-      });
-      // 重新初始化 ViewModel 以重新检测工具
-      vm.recheckTools();
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_installLog.contains('安装成功') ? '$tool 安装成功' : '$tool 安装失败，请查看日志')),
-      );
-    }
+  Widget _toolRow(String name, bool available) {
+    return Row(
+      children: [
+        Icon(available ? Icons.check_circle : Icons.cancel,
+          size: 18, color: available ? Colors.green : Colors.red),
+        const SizedBox(width: 8),
+        Text(name),
+        const Spacer(),
+        Text(available ? '已安装' : '未安装',
+          style: TextStyle(fontSize: 12, color: available ? Colors.green : Colors.red)),
+      ],
+    );
   }
 
   void _showAbout(BuildContext context) {
@@ -288,6 +251,31 @@ class _LinkButton extends StatelessWidget {
             )),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _NoToolHint extends StatelessWidget {
+  const _NoToolHint();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.build_outlined, size: 64, color: Theme.of(context).colorScheme.outline),
+          const SizedBox(height: 16),
+          Text('工具未就绪', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          Text(
+            '请重启应用，在启动页完成工具安装',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
       ),
     );
   }
