@@ -208,9 +208,23 @@ class _SplashViewState extends State<SplashView> with SingleTickerProviderStateM
   }
 
   Widget _buildInstallSection(List<ToolCheckItem> missingItems, ThemeData theme, Color cardColor) {
+    final allRequiredReady = _items.where((i) => i.required).every((i) => i.status == ToolStatus.available);
+
     return Column(
       children: [
         for (final item in missingItems) _buildInstallCard(item, cardColor),
+        if (allRequiredReady) ...[
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: widget.onReady,
+              icon: const Icon(Icons.arrow_forward, size: 18),
+              label: const Text('跳过，直接进入'),
+              style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+            ),
+          ),
+        ],
       ],
     );
   }

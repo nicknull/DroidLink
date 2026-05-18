@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:android_manager/constants/app_names.dart';
@@ -217,6 +218,31 @@ class AdbService {
     _detectScrcpy();
   }
 
+  /// 并行消费进程的 stdout 和 stderr，按到达顺序 yield 日志事件
+  Stream<InstallEvent> _streamProcessOutput(Process process) {
+    final controller = StreamController<InstallEvent>();
+    final stdoutStream = process.stdout.transform(const SystemEncoding().decoder);
+    final stderrStream = process.stderr.transform(const SystemEncoding().decoder);
+
+    var pending = 2;
+    void checkDone() {
+      if (pending == 0) controller.close();
+    }
+
+    stdoutStream.listen(
+      (line) => controller.add(InstallEvent(InstallEventType.log, line)),
+      onDone: () { pending--; checkDone(); },
+      onError: (e) { pending--; checkDone(); },
+    );
+    stderrStream.listen(
+      (line) => controller.add(InstallEvent(InstallEventType.log, line)),
+      onDone: () { pending--; checkDone(); },
+      onError: (e) { pending--; checkDone(); },
+    );
+
+    return controller.stream;
+  }
+
   /// 安装 Homebrew（macOS）
   Stream<InstallEvent> installHomebrew() async* {
     if (!Platform.isMacOS) {
@@ -234,11 +260,8 @@ class AdbService {
       runInShell: true,
     );
 
-    await for (final line in process.stdout.transform(const SystemEncoding().decoder)) {
-      yield InstallEvent(InstallEventType.log, line);
-    }
-    await for (final line in process.stderr.transform(const SystemEncoding().decoder)) {
-      yield InstallEvent(InstallEventType.log, line);
+    await for (final event in _streamProcessOutput(process)) {
+      yield event;
     }
 
     final exitCode = await process.exitCode;
@@ -272,11 +295,8 @@ class AdbService {
         runInShell: true,
       );
 
-      await for (final line in process.stdout.transform(const SystemEncoding().decoder)) {
-        yield InstallEvent(InstallEventType.log, line);
-      }
-      await for (final line in process.stderr.transform(const SystemEncoding().decoder)) {
-        yield InstallEvent(InstallEventType.log, line);
+      await for (final event in _streamProcessOutput(process)) {
+        yield event;
       }
 
       final exitCode = await process.exitCode;
