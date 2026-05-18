@@ -75,8 +75,8 @@ class StartupChecker {
       id: 'scrcpy',
       name: 'scrcpy',
       iconCodePoint: ToolIcons.scrcpy,
-      required: false,
-      description: '投屏与录屏工具（缺失时无法使用投屏功能）',
+      required: true,
+      description: '投屏与录屏工具',
     ));
 
     return items;
