@@ -14,6 +14,12 @@ class SplashView extends StatefulWidget {
 }
 
 class _SplashViewState extends State<SplashView> with SingleTickerProviderStateMixin {
+  static const _iconMap = <String, IconData>{
+    'phone_android': Icons.phone_android,
+    'screen_share': Icons.screen_share,
+    'local_cafe': Icons.local_cafe,
+  };
+
   late StartupChecker _checker;
   List<ToolCheckItem> _items = [];
   bool _checking = true;
@@ -161,7 +167,7 @@ class _SplashViewState extends State<SplashView> with SingleTickerProviderStateM
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
             children: [
-              Icon(IconData(item.iconCodePoint, fontFamily: 'MaterialIcons'), size: 20, color: statusColor),
+              Icon(_iconMap[item.icon] ?? Icons.build, size: 20, color: statusColor),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -233,7 +239,7 @@ class _SplashViewState extends State<SplashView> with SingleTickerProviderStateM
           children: [
             Row(
               children: [
-                Icon(IconData(item.iconCodePoint, fontFamily: 'MaterialIcons'), size: 22, color: Colors.blue),
+                Icon(_iconMap[item.icon] ?? Icons.build, size: 22, color: Colors.blue),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(

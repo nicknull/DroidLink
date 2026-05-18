@@ -8,7 +8,7 @@ enum ToolStatus { pending, checking, available, missing }
 class ToolCheckItem {
   final String id;
   final String name;
-  final int iconCodePoint; // Material icon code point
+  final String icon; // Material icon name
   final bool required;
   final String description;
   ToolStatus status;
@@ -16,30 +16,19 @@ class ToolCheckItem {
   ToolCheckItem({
     required this.id,
     required this.name,
-    required this.iconCodePoint,
+    required this.icon,
     required this.required,
     required this.description,
     this.status = ToolStatus.pending,
   });
 }
 
-// IconData 引用 Flutter，为避免引入 UI 依赖到 service 层，
-// 改用 String 图标标识，View 层负责映射
-// 但为了简洁，直接用 Material Icons 的 codePoint
-class ToolIcons {
-  static const int adb = 0xe3af; // Icons.phone_android
-  static const int scrcpy = 0xe332; // Icons.screen_share
-  static const int homebrew = 0xe8d0; // Icons.local_cafe
-}
-
 /// 启动检测结果
 class StartupCheckResult {
   final List<ToolCheckItem> items;
   bool get allRequiredReady => items.where((i) => i.required).every((i) => i.status == ToolStatus.available);
-  bool get hasHomebrew => _adb.hasHomebrew;
 
-  final AdbService _adb;
-  StartupCheckResult(this.items, this._adb);
+  StartupCheckResult(this.items);
 }
 
 /// 启动检测服务：逐项检测依赖工具
@@ -52,12 +41,11 @@ class StartupChecker {
   List<ToolCheckItem> buildCheckList() {
     final items = <ToolCheckItem>[];
 
-    // macOS: 检测 Homebrew
     if (Platform.isMacOS) {
       items.add(ToolCheckItem(
         id: 'homebrew',
         name: 'Homebrew',
-        iconCodePoint: ToolIcons.homebrew,
+        icon: 'local_cafe',
         required: false,
         description: 'macOS 包管理器，用于自动安装其他工具',
       ));
@@ -66,7 +54,7 @@ class StartupChecker {
     items.add(ToolCheckItem(
       id: 'adb',
       name: 'ADB',
-      iconCodePoint: ToolIcons.adb,
+      icon: 'phone_android',
       required: true,
       description: 'Android 调试桥，核心通信工具',
     ));
@@ -74,7 +62,7 @@ class StartupChecker {
     items.add(ToolCheckItem(
       id: 'scrcpy',
       name: 'scrcpy',
-      iconCodePoint: ToolIcons.scrcpy,
+      icon: 'screen_share',
       required: true,
       description: '投屏与录屏工具',
     ));
@@ -109,7 +97,7 @@ class StartupChecker {
       }
     }
 
-    return StartupCheckResult(items, _adb);
+    return StartupCheckResult(items);
   }
 
   /// 重新检测指定工具
