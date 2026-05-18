@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
   build-macos:
@@ -21,16 +22,52 @@ jobs:
       - name: Build macOS
         run: flutter build macos --release
 
-      - name: Package macOS app
+      - name: Create DMG installer
         run: |
-          ditto -c -k --sequesterRsrc --keepParent \
-            build/macos/Build/Products/Release/DroidLink.app \
-            "$GITHUB_WORKSPACE/DroidLink-macOS.zip"
+          APP_PATH="build/macos/Build/Products/Release/DroidLink.app"
+          DMG_PATH="$GITHUB_WORKSPACE/DroidLink-macOS.dmg"
+          DMG_TEMP="$GITHUB_WORKSPACE/dmg_temp"
+
+          mkdir -p "$DMG_TEMP"
+          cp -R "$APP_PATH" "$DMG_TEMP/"
+          ln -s /Applications "$DMG_TEMP/Applications"
+
+          cat > "$DMG_TEMP/安装说明.txt" << 'EOF'
+          DroidLink 安装说明
+          ==================
+
+          1. 将 DroidLink.app 拖拽到 Applications 文件夹
+
+          2. 首次打开时，macOS 可能会提示"无法验证开发者"，
+             请按以下步骤操作：
+
+             方法一：
+             - 右键点击 DroidLink.app → 选择「打开」
+             - 在弹出的对话框中点击「打开」
+
+             方法二：
+             - 打开「系统设置」→「隐私与安全性」
+             - 在底部找到被阻止的 DroidLink，点击「仍要打开」
+
+          3. 如果提示需要输入密码，请输入您的 macOS 登录密码
+
+          4. 使用 ADB 连接设备前，请确保：
+             - Android 设备已开启「USB 调试」
+             - 已通过 USB 连接到电脑
+             - 设备上已授权此电脑的调试权限
+          EOF
+
+          hdiutil create -volname "DroidLink" \
+            -srcfolder "$DMG_TEMP" \
+            -ov -format UDZO \
+            "$DMG_PATH"
+
+          rm -rf "$DMG_TEMP"
 
       - uses: actions/upload-artifact@v4
         with:
           name: DroidLink-macOS
-          path: DroidLink-macOS.zip
+          path: DroidLink-macOS.dmg
 
   build-windows:
     runs-on: windows-latest
@@ -62,12 +99,29 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
+
+      - name: Get version from pubspec.yaml
+        id: version
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d'+' -f1)
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag if manual trigger
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          git push origin ":refs/tags/${TAG}" 2>/dev/null || true
+          git tag "$TAG"
+          git push origin "$TAG"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
           files: |
-            DroidLink-macOS/DroidLink-macOS.zip
+            DroidLink-macOS/DroidLink-macOS.dmg
             DroidLink-Windows/DroidLink-Windows.zip
           generate_release_notes: true

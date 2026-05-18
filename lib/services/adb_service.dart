@@ -547,6 +547,15 @@ class AdbService {
       ['--serial', serial, '--always-on-top'],
       environment: _scrcpyEnv(),
     );
+    // macOS 下 scrcpy 窗口不会自动抢前台焦点，延迟后用 AppleScript 激活
+    if (Platform.isMacOS) {
+      Future.delayed(const Duration(seconds: 1), () {
+        Process.run('osascript', [
+          '-e',
+          'tell application "System Events" to set frontmost of every process whose name contains "scrcpy" to true',
+        ]);
+      });
+    }
   }
 
   Future<String> getBatteryInfo(String serial) async {
