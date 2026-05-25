@@ -514,6 +514,14 @@ class AdbService {
     return result.exitCode == 0;
   }
 
+  /// 移除 macOS 隔离标记（quarantine），防止系统静默阻止 scrcpy 运行
+  void _removeQuarantine() {
+    if (!Platform.isMacOS || _scrcpyPath == null) return;
+    try {
+      Process.runSync('xattr', ['-cr', _scrcpyPath!]);
+    } catch (_) {}
+  }
+
   /// 构建 scrcpy 所需的环境变量（注入已知工具路径）
   Map<String, String> _scrcpyEnv() {
     final env = Map<String, String>.from(Platform.environment);
@@ -532,6 +540,7 @@ class AdbService {
   /// 返回 Process 对象，调用 kill() 停止录制
   Future<Process> startScrcpyRecord(String serial, String localPath) async {
     if (_scrcpyPath == null) throw Exception('scrcpy 未安装');
+    _removeQuarantine();
     return Process.start(
       _scrcpyPath!,
       ['--no-window', '--serial', serial, '--record', localPath],
@@ -542,6 +551,7 @@ class AdbService {
   /// 启动 scrcpy 投屏（带窗口，置顶）
   Future<void> startScrcpyMirror(String serial) async {
     if (_scrcpyPath == null) throw Exception('scrcpy 未安装');
+    _removeQuarantine();
     final process = await Process.start(
       _scrcpyPath!,
       ['--serial', serial, '--always-on-top'],
