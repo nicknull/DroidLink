@@ -542,11 +542,29 @@ class AdbService {
   /// 启动 scrcpy 投屏（带窗口，置顶）
   Future<void> startScrcpyMirror(String serial) async {
     if (_scrcpyPath == null) throw Exception('scrcpy 未安装');
-    await Process.start(
+    final process = await Process.start(
       _scrcpyPath!,
       ['--serial', serial, '--always-on-top'],
       environment: _scrcpyEnv(),
     );
+
+    // 捕获 stderr 用于错误诊断
+    final stderrBuf = StringBuffer();
+    process.stderr.transform(const SystemEncoding().decoder).listen(stderrBuf.write);
+
+    // 如果进程在 3 秒内退出，说明启动失败，抛出错误
+    final exitCode = await process.exitCode.timeout(
+      const Duration(seconds: 3),
+      onTimeout: () {
+        // 进程还在运行，说明启动成功
+        return -1;
+      },
+    );
+    if (exitCode != -1) {
+      final err = stderrBuf.toString().trim();
+      throw Exception('scrcpy 启动失败 (exit code: $exitCode)\n${err.isNotEmpty ? err : "可能是 macOS 安全限制，请在系统设置 → 隐私与安全性中允许运行 scrcpy"}');
+    }
+
     // macOS 下 scrcpy 窗口不会自动抢前台焦点，延迟后用 AppleScript 激活
     if (Platform.isMacOS) {
       Future.delayed(const Duration(seconds: 1), () {
