@@ -37,6 +37,7 @@ class _GalleryViewState extends State<GalleryView> {
   static const _gridPadding = 8.0;
 
   final Map<String, GlobalKey<DragItemWidgetState>> _dragItemKeys = {};
+  final GlobalKey _stackKey = GlobalKey();
 
   @override
   void initState() {
@@ -144,111 +145,122 @@ class _GalleryViewState extends State<GalleryView> {
     return LayoutBuilder(builder: (context, constraints) {
       _gridWidth = constraints.maxWidth;
 
-      return Listener(
-        behavior: HitTestBehavior.translucent,
-        onPointerDown: (event) {
-          _dragStart = event.localPosition;
-          _dragCurrent = event.localPosition;
-        },
-        onPointerMove: (event) {
-          if (_dragStart == null) return;
-          // 已选中项上的拖拽交给 DraggableWidget 处理，不启动框选
-          if (_isOnSelectedItem(_dragStart!, vm)) return;
-          final delta = (event.localPosition - _dragStart!).distance;
-          if (delta > 10) {
-            if (!_isDragging) {
-              _isDragging = true;
-              if (!_selectMode) setState(() => _selectMode = true);
-              vm.clearSelection();
-            }
-            _dragCurrent = event.localPosition;
-            _updateDragSelection(vm);
-            setState(() {});
-          }
-        },
-        onPointerUp: (event) {
-          if (_isDragging) {
-            _isDragging = false;
-            _dragStart = null;
-            _dragCurrent = null;
-            setState(() {});
-          } else {
-            _dragStart = null;
-            _dragCurrent = null;
-          }
-        },
-        child: Stack(
-          children: [
-            GridView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.all(_gridPadding),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: _crossAxisCount,
-                crossAxisSpacing: _crossAxisSpacing,
-                mainAxisSpacing: _mainAxisSpacing,
-              ),
-              itemCount: vm.items.length + (vm.hasMore ? 1 : 0),
-              itemBuilder: (context, index) {
-                if (index >= vm.items.length) {
-                  return const Center(
-                    child: SizedBox(
-                      width: 24, height: 24,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  );
+      return DragItemWidget(
+        dragItemProvider: (_) async => null,
+        allowedOperations: () => [DropOperation.copy],
+        child: DraggableWidget(
+          isLocationDraggable: (globalPosition) {
+            final currentVm = _vm;
+            if (currentVm == null || currentVm.selectedPaths.isEmpty) return false;
+            final box = _stackKey.currentContext?.findRenderObject() as RenderBox?;
+            if (box == null) return false;
+            final local = box.globalToLocal(globalPosition);
+            return _isOnSelectedItem(local, currentVm);
+          },
+          dragItemsProvider: (_) => _collectDragStates(),
+          child: Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: (event) {
+              _dragStart = event.localPosition;
+              _dragCurrent = event.localPosition;
+            },
+            onPointerMove: (event) {
+              if (_dragStart == null) return;
+              final delta = (event.localPosition - _dragStart!).distance;
+              if (delta > 10) {
+                if (!_isDragging) {
+                  _isDragging = true;
+                  if (!_selectMode) setState(() => _selectMode = true);
+                  vm.clearSelection();
                 }
-                final item = vm.items[index];
-                final isSelected = vm.selectedPaths.contains(item.path);
+                _dragCurrent = event.localPosition;
+                _updateDragSelection(vm);
+                setState(() {});
+              }
+            },
+            onPointerUp: (event) {
+              if (_isDragging) {
+                _isDragging = false;
+                _dragStart = null;
+                _dragCurrent = null;
+                setState(() {});
+              } else {
+                _dragStart = null;
+                _dragCurrent = null;
+              }
+            },
+            child: Stack(
+              key: _stackKey,
+              children: [
+                GridView.builder(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.all(_gridPadding),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: _crossAxisCount,
+                    crossAxisSpacing: _crossAxisSpacing,
+                    mainAxisSpacing: _mainAxisSpacing,
+                  ),
+                  itemCount: vm.items.length + (vm.hasMore ? 1 : 0),
+                  itemBuilder: (context, index) {
+                    if (index >= vm.items.length) {
+                      return const Center(
+                        child: SizedBox(
+                          width: 24, height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      );
+                    }
+                    final item = vm.items[index];
+                    final isSelected = vm.selectedPaths.contains(item.path);
 
-                if (isSelected && _supportsDragExport) {
-                  _dragItemKeys[item.path] ??= GlobalKey<DragItemWidgetState>();
-                  return DragItemWidget(
-                    key: _dragItemKeys[item.path],
-                    dragItemProvider: (_) => _createDragItem(item),
-                    allowedOperations: () => [DropOperation.copy],
-                    child: DraggableWidget(
-                      dragItemsProvider: (_) => _collectDragStates(),
-                      child: MediaGridItem(
-                        item: item,
-                        isSelected: true,
-                        onTap: () => _onItemTap(context, vm, item),
-                        thumbnailLoader: (i) => vm.getThumbnail(i),
-                        onExport: () => _exportSingle(vm, item),
-                        onSelect: () {
-                          if (!_selectMode) setState(() => _selectMode = true);
-                          vm.toggleSelection(item.path);
-                        },
+                    if (isSelected && _supportsDragExport) {
+                      _dragItemKeys[item.path] ??= GlobalKey<DragItemWidgetState>();
+                      return DragItemWidget(
+                        key: _dragItemKeys[item.path],
+                        dragItemProvider: (_) => _createDragItem(item),
+                        allowedOperations: () => [DropOperation.copy],
+                        child: MediaGridItem(
+                          item: item,
+                          isSelected: true,
+                          onTap: () => _onItemTap(context, vm, item),
+                          thumbnailLoader: (i) => vm.getThumbnail(i),
+                          onExport: () => _exportSingle(vm, item),
+                          onSelect: () {
+                            if (!_selectMode) setState(() => _selectMode = true);
+                            vm.toggleSelection(item.path);
+                          },
+                        ),
+                      );
+                    }
+
+                    _dragItemKeys.remove(item.path);
+                    return MediaGridItem(
+                      item: item,
+                      isSelected: isSelected,
+                      onTap: () => _onItemTap(context, vm, item),
+                      thumbnailLoader: (i) => vm.getThumbnail(i),
+                      onExport: () => _exportSingle(vm, item),
+                      onSelect: () {
+                        if (!_selectMode) setState(() => _selectMode = true);
+                        vm.toggleSelection(item.path);
+                      },
+                    );
+                  },
+                ),
+                if (_isDragging && _dragStart != null && _dragCurrent != null)
+                  Positioned.fromRect(
+                    rect: Rect.fromPoints(_dragStart!, _dragCurrent!),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withValues(alpha: 0.15),
+                        border: Border.all(color: Colors.blue, width: 1.5),
+                        borderRadius: BorderRadius.circular(2),
                       ),
                     ),
-                  );
-                }
-
-                _dragItemKeys.remove(item.path);
-                return MediaGridItem(
-                  item: item,
-                  isSelected: isSelected,
-                  onTap: () => _onItemTap(context, vm, item),
-                  thumbnailLoader: (i) => vm.getThumbnail(i),
-                  onExport: () => _exportSingle(vm, item),
-                  onSelect: () {
-                    if (!_selectMode) setState(() => _selectMode = true);
-                    vm.toggleSelection(item.path);
-                  },
-                );
-              },
-            ),
-            if (_isDragging && _dragStart != null && _dragCurrent != null)
-              Positioned.fromRect(
-                rect: Rect.fromPoints(_dragStart!, _dragCurrent!),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withValues(alpha: 0.15),
-                    border: Border.all(color: Colors.blue, width: 1.5),
-                    borderRadius: BorderRadius.circular(2),
                   ),
-                ),
-              ),
-          ],
+              ],
+            ),
+          ),
         ),
       );
     });
