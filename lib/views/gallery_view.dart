@@ -6,6 +6,8 @@ import 'package:provider/provider.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:super_drag_and_drop/super_drag_and_drop.dart';
+import 'package:path/path.dart' as p;
 import 'package:android_manager/viewmodels/device_viewmodel.dart';
 import 'package:android_manager/viewmodels/gallery_viewmodel.dart';
 import 'package:android_manager/models/media_item.dart';
@@ -33,6 +35,8 @@ class _GalleryViewState extends State<GalleryView> {
   static const _crossAxisSpacing = 4.0;
   static const _mainAxisSpacing = 4.0;
   static const _gridPadding = 8.0;
+
+  final Map<String, GlobalKey<DragItemWidgetState>> _dragItemKeys = {};
 
   @override
   void initState() {
@@ -148,6 +152,8 @@ class _GalleryViewState extends State<GalleryView> {
         },
         onPointerMove: (event) {
           if (_dragStart == null) return;
+          // 已选中项上的拖拽交给 DraggableWidget 处理，不启动框选
+          if (_isOnSelectedItem(_dragStart!, vm)) return;
           final delta = (event.localPosition - _dragStart!).distance;
           if (delta > 10) {
             if (!_isDragging) {
@@ -192,9 +198,35 @@ class _GalleryViewState extends State<GalleryView> {
                   );
                 }
                 final item = vm.items[index];
+                final isSelected = vm.selectedPaths.contains(item.path);
+
+                if (isSelected && _supportsDragExport) {
+                  _dragItemKeys[item.path] ??= GlobalKey<DragItemWidgetState>();
+                  return DragItemWidget(
+                    key: _dragItemKeys[item.path],
+                    dragItemProvider: (_) => _createDragItem(item),
+                    allowedOperations: () => [DropOperation.copy],
+                    child: DraggableWidget(
+                      dragItemsProvider: (_) => _collectDragStates(),
+                      child: MediaGridItem(
+                        item: item,
+                        isSelected: true,
+                        onTap: () => _onItemTap(context, vm, item),
+                        thumbnailLoader: (i) => vm.getThumbnail(i),
+                        onExport: () => _exportSingle(vm, item),
+                        onSelect: () {
+                          if (!_selectMode) setState(() => _selectMode = true);
+                          vm.toggleSelection(item.path);
+                        },
+                      ),
+                    ),
+                  );
+                }
+
+                _dragItemKeys.remove(item.path);
                 return MediaGridItem(
                   item: item,
-                  isSelected: vm.selectedPaths.contains(item.path),
+                  isSelected: isSelected,
                   onTap: () => _onItemTap(context, vm, item),
                   thumbnailLoader: (i) => vm.getThumbnail(i),
                   onExport: () => _exportSingle(vm, item),
@@ -246,6 +278,98 @@ class _GalleryViewState extends State<GalleryView> {
     }
 
     vm.updateDragSelection(selected);
+  }
+
+  bool get _supportsDragExport => Platform.isMacOS || Platform.isWindows;
+
+  bool _isOnSelectedItem(Offset position, GalleryViewModel vm) {
+    if (vm.selectedPaths.isEmpty) return false;
+    final scrollOffset = _scrollController.offset;
+    final itemWidth = (_gridWidth - _gridPadding * 2 - _crossAxisSpacing * (_crossAxisCount - 1)) / _crossAxisCount;
+    final itemHeight = itemWidth;
+
+    for (int i = 0; i < vm.items.length; i++) {
+      final row = i ~/ _crossAxisCount;
+      final col = i % _crossAxisCount;
+      final left = _gridPadding + col * (itemWidth + _crossAxisSpacing);
+      final top = _gridPadding + row * (itemHeight + _mainAxisSpacing) - scrollOffset;
+      final itemRect = Rect.fromLTWH(left, top, itemWidth, itemHeight);
+      if (itemRect.contains(position) && vm.selectedPaths.contains(vm.items[i].path)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  FileFormat _getFormatForItem(MediaItem item) {
+    final ext = p.extension(item.name).toLowerCase();
+    switch (ext) {
+      case '.jpg':
+      case '.jpeg':
+        return Formats.jpeg;
+      case '.png':
+        return Formats.png;
+      case '.gif':
+        return Formats.gif;
+      case '.bmp':
+        return Formats.bmp;
+      case '.webp':
+        return Formats.webp;
+      case '.mp4':
+        return Formats.mp4;
+      case '.3gp':
+        return Formats.mp4;
+      case '.webm':
+        return Formats.webm;
+      case '.mkv':
+        return Formats.mkv;
+      case '.avi':
+        return Formats.avi;
+      case '.mov':
+        return Formats.mov;
+      default:
+        return Formats.jpeg;
+    }
+  }
+
+  Future<DragItem?> _createDragItem(MediaItem item) async {
+    final vm = _vm;
+    if (vm == null) return null;
+
+    final format = _getFormatForItem(item);
+    final dragItem = DragItem(
+      suggestedName: item.name,
+      localData: {'path': item.path},
+    );
+    dragItem.addVirtualFile(
+      format: format,
+      provider: (sinkProvider, progress) async {
+        try {
+          if (!mounted) return;
+          final tempPath = await vm.downloadToTemp(item);
+          if (tempPath == null || !mounted) return;
+          final file = File(tempPath);
+          if (!await file.exists()) return;
+          final bytes = await file.readAsBytes();
+          if (!mounted) return;
+          final sink = sinkProvider(fileSize: bytes.length);
+          sink.add(bytes);
+          sink.close();
+        } catch (_) {}
+      },
+    );
+    return dragItem;
+  }
+
+  List<DragItemWidgetState> _collectDragStates() {
+    final vm = _vm;
+    if (vm == null) return [];
+    return _dragItemKeys.entries
+        .where((e) => vm.selectedPaths.contains(e.key))
+        .map((e) => e.value.currentState)
+        .whereType<DragItemWidgetState>()
+        .where((s) => s.mounted)
+        .toList();
   }
 
   void _onItemTap(BuildContext context, GalleryViewModel vm, MediaItem item) {
