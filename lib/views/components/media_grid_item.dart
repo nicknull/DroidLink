@@ -6,27 +6,25 @@ class MediaGridItem extends StatelessWidget {
   final MediaItem item;
   final bool isSelected;
   final VoidCallback onTap;
-  final VoidCallback? onLongPress;
+  final VoidCallback? onDoubleTap;
   final Future<String?> Function(MediaItem) thumbnailLoader;
   final VoidCallback? onExport;
-  final VoidCallback? onSelect;
 
   const MediaGridItem({
     super.key,
     required this.item,
     required this.isSelected,
     required this.onTap,
-    this.onLongPress,
+    this.onDoubleTap,
     required this.thumbnailLoader,
     this.onExport,
-    this.onSelect,
   });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
-      onLongPress: onLongPress,
+      onDoubleTap: onDoubleTap,
       onSecondaryTapUp: (details) => _showContextMenu(context, details.globalPosition),
       child: Stack(
         fit: StackFit.expand,
@@ -81,8 +79,6 @@ class MediaGridItem extends StatelessWidget {
         children: [
           if (onExport != null)
             _MenuItem(icon: Icons.download, label: '导出到电脑', onTap: () { entry.remove(); onExport!(); }),
-          if (onSelect != null)
-            _MenuItem(icon: Icons.check_circle_outline, label: '选择', onTap: () { entry.remove(); onSelect!(); }),
         ],
       ),
     );

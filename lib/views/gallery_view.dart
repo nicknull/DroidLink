@@ -24,7 +24,6 @@ class _GalleryViewState extends State<GalleryView> {
   GalleryViewModel? _vm;
   String? _currentSerial;
   final ScrollController _scrollController = ScrollController();
-  bool _selectMode = false;
 
   Offset? _dragStart;
   Offset? _dragCurrent;
@@ -97,34 +96,22 @@ class _GalleryViewState extends State<GalleryView> {
 
   Widget _buildToolbar(BuildContext context) {
     final vm = context.watch<GalleryViewModel>();
+    final hasSelection = vm.selectedPaths.isNotEmpty;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Row(
         children: [
-          Text('共 ${vm.totalCount} 项${vm.hasMore ? "，已加载 ${vm.displayCount}" : ""}',
-            style: Theme.of(context).textTheme.bodySmall),
-          const Spacer(),
-          Tooltip(
-            message: _selectMode ? '切换到浏览模式' : '切换到选择模式',
-            child: IconButton(
-              icon: Icon(_selectMode ? Icons.check_circle : Icons.photo_library),
-              color: _selectMode ? Theme.of(context).colorScheme.primary : null,
-              onPressed: () {
-                setState(() => _selectMode = !_selectMode);
-                if (!_selectMode) vm.clearSelection();
-              },
-            ),
+          Text(
+            hasSelection
+                ? '已选 ${vm.selectedPaths.length} 项'
+                : '共 ${vm.totalCount} 项${vm.hasMore ? "，已加载 ${vm.displayCount}" : ""}',
+            style: Theme.of(context).textTheme.bodySmall,
           ),
-          if (_selectMode) ...[
-            if (vm.selectedPaths.isNotEmpty) ...[
-              Text('已选 ${vm.selectedPaths.length} 项', style: Theme.of(context).textTheme.bodySmall),
-              const SizedBox(width: 8),
-              TextButton(onPressed: () => _exportSelected(vm), child: const Text('导出')),
-              TextButton(onPressed: vm.clearSelection, child: const Text('取消')),
-            ] else ...[
-              TextButton(onPressed: vm.selectAll, child: const Text('全选')),
-              TextButton(onPressed: vm.selectNew, child: const Text('全选新的')),
-            ],
+          const Spacer(),
+          TextButton(onPressed: vm.selectAll, child: const Text('全选')),
+          if (hasSelection) ...[
+            TextButton(onPressed: () => _exportSelected(vm), child: const Text('导出')),
+            TextButton(onPressed: vm.clearSelection, child: const Text('清除')),
           ],
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -170,7 +157,6 @@ class _GalleryViewState extends State<GalleryView> {
               if (delta > 10) {
                 if (!_isDragging) {
                   _isDragging = true;
-                  if (!_selectMode) setState(() => _selectMode = true);
                   vm.clearSelection();
                 }
                 _dragCurrent = event.localPosition;
@@ -222,13 +208,10 @@ class _GalleryViewState extends State<GalleryView> {
                         child: MediaGridItem(
                           item: item,
                           isSelected: true,
-                          onTap: () => _onItemTap(context, vm, item),
+                          onTap: () => vm.toggleSelection(item.path),
+                          onDoubleTap: () => _openPreview(context, vm, item),
                           thumbnailLoader: (i) => vm.getThumbnail(i),
                           onExport: () => _exportSingle(vm, item),
-                          onSelect: () {
-                            if (!_selectMode) setState(() => _selectMode = true);
-                            vm.toggleSelection(item.path);
-                          },
                         ),
                       );
                     }
@@ -237,13 +220,10 @@ class _GalleryViewState extends State<GalleryView> {
                     return MediaGridItem(
                       item: item,
                       isSelected: isSelected,
-                      onTap: () => _onItemTap(context, vm, item),
+                      onTap: () => vm.toggleSelection(item.path),
+                      onDoubleTap: () => _openPreview(context, vm, item),
                       thumbnailLoader: (i) => vm.getThumbnail(i),
                       onExport: () => _exportSingle(vm, item),
-                      onSelect: () {
-                        if (!_selectMode) setState(() => _selectMode = true);
-                        vm.toggleSelection(item.path);
-                      },
                     );
                   },
                 ),
@@ -384,19 +364,15 @@ class _GalleryViewState extends State<GalleryView> {
         .toList();
   }
 
-  void _onItemTap(BuildContext context, GalleryViewModel vm, MediaItem item) {
-    if (_selectMode) {
-      vm.toggleSelection(item.path);
-    } else {
-      final index = vm.items.indexOf(item);
-      showDialog(
-        context: context,
-        builder: (ctx) => _PreviewDialog(
-          vm: vm,
-          initialIndex: index >= 0 ? index : 0,
-        ),
-      );
-    }
+  void _openPreview(BuildContext context, GalleryViewModel vm, MediaItem item) {
+    final index = vm.items.indexOf(item);
+    showDialog(
+      context: context,
+      builder: (ctx) => _PreviewDialog(
+        vm: vm,
+        initialIndex: index >= 0 ? index : 0,
+      ),
+    );
   }
 
   Future<void> _exportSelected(GalleryViewModel vm) async {
