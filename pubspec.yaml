@@ -20,6 +20,7 @@ dependencies:
   media_kit_libs_video: ^1.0.7
   archive: ^4.0.9
   url_launcher: ^6.3.0
+  package_info_plus: ^9.0.1
   super_drag_and_drop: ^0.9.1
 
 dev_dependencies:

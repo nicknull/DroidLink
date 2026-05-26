@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:android_manager/viewmodels/device_viewmodel.dart';
+import 'package:android_manager/services/update_service.dart';
 import 'package:android_manager/views/file_explorer_view.dart';
 import 'package:android_manager/views/gallery_view.dart';
 import 'package:android_manager/views/app_manager_view.dart';
@@ -15,6 +17,20 @@ class HomeView extends StatefulWidget {
 }
 
 class _HomeViewState extends State<HomeView> {
+  UpdateInfo? _updateInfo;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkForUpdate();
+  }
+
+  Future<void> _checkForUpdate() async {
+    final info = await UpdateService.checkForUpdate();
+    if (info != null && mounted) {
+      setState(() => _updateInfo = info);
+    }
+  }
   @override
   Widget build(BuildContext context) {
     final vm = context.watch<DeviceViewModel>();
@@ -30,6 +46,17 @@ class _HomeViewState extends State<HomeView> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
+                  if (_updateInfo != null)
+                    Tooltip(
+                      message: '新版本 v${_updateInfo!.version} 可用',
+                      child: IconButton(
+                        icon: Badge(
+                          isLabelVisible: true,
+                          child: Icon(Icons.system_update, size: 20, color: Theme.of(context).colorScheme.primary),
+                        ),
+                        onPressed: () => _showUpdateDialog(context),
+                      ),
+                    ),
                   if (!vm.adbAvailable || !vm.adb.hasScrcpy)
                     IconButton(
                       icon: Badge(
@@ -198,27 +225,62 @@ class _HomeViewState extends State<HomeView> {
   void _showAbout(BuildContext context) {
     showDialog(
       context: context,
+      builder: (ctx) => FutureBuilder<PackageInfo>(
+        future: PackageInfo.fromPlatform(),
+        builder: (ctx, snap) {
+          final version = snap.data?.version ?? '-';
+          return AlertDialog(
+            title: Row(
+              children: [
+                Image.asset('assets/icon.png', width: 32, height: 32),
+                const SizedBox(width: 12),
+                const Text('DroidLink'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('版本：$version'),
+                const SizedBox(height: 8),
+                const Text('Android 设备桌面管理工具'),
+                const SizedBox(height: 16),
+                const _LinkButton(icon: Icons.code, label: 'GitHub', url: 'https://github.com/nicknull/DroidLink'),
+              ],
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('确定')),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _showUpdateDialog(BuildContext context) {
+    final info = _updateInfo!;
+    showDialog(
+      context: context,
       builder: (ctx) => AlertDialog(
-        title: Row(
-          children: [
-            Image.asset('assets/icon.png', width: 32, height: 32),
-            const SizedBox(width: 12),
-            const Text('DroidLink'),
-          ],
-        ),
-        content: const Column(
+        title: const Text('发现新版本'),
+        content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('版本：0.0.1'),
-            SizedBox(height: 8),
-            Text('Android 设备桌面管理工具'),
-            SizedBox(height: 16),
-            _LinkButton(icon: Icons.code, label: 'GitHub', url: 'https://github.com/nicknull/DroidLink'),
+            Text('新版本：v${info.version}'),
+            const SizedBox(height: 8),
+            const Text('前往 GitHub 下载最新版本'),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('确定')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('稍后')),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              launchUrl(Uri.parse(info.url));
+            },
+            child: const Text('去下载'),
+          ),
         ],
       ),
     );
