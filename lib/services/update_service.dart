@@ -21,10 +21,10 @@ class UpdateService {
   }
 
   static Future<UpdateInfo?> checkForUpdate() async {
+    final client = HttpClient();
+    client.connectionTimeout = const Duration(seconds: 10);
     try {
       final current = await currentVersion();
-      final client = HttpClient();
-      client.connectionTimeout = const Duration(seconds: 10);
       final request = await client.getUrl(Uri.parse(_apiUrl));
       request.headers.set('User-Agent', 'DroidLink');
       final response = await request.close();
@@ -44,14 +44,21 @@ class UpdateService {
           notes: json['body'] as String?,
         );
       }
-    } catch (_) {}
-    return null;
+      return null;
+    } catch (_) {
+      return null;
+    } finally {
+      client.close();
+    }
   }
 
   /// 简单 semver 比较：a > b 返回 true
   static bool _isNewer(String a, String b) {
-    final pa = a.split('.').map(int.parse).toList();
-    final pb = b.split('.').map(int.parse).toList();
+    // 去掉预发布标识（如 -beta, -rc.1）和构建元数据（如 +build123）
+    final cleanA = a.split(RegExp(r'[-+]')).first;
+    final cleanB = b.split(RegExp(r'[-+]')).first;
+    final pa = cleanA.split('.').map((s) => int.tryParse(s) ?? 0).toList();
+    final pb = cleanB.split('.').map((s) => int.tryParse(s) ?? 0).toList();
     for (var i = 0; i < pa.length && i < pb.length; i++) {
       if (pa[i] > pb[i]) return true;
       if (pa[i] < pb[i]) return false;

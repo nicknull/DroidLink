@@ -28,6 +28,7 @@ class _GalleryViewState extends State<GalleryView> {
   Offset? _dragStart;
   Offset? _dragCurrent;
   bool _isDragging = false;
+  Set<String>? _preDragSelection;
   double _gridWidth = 0;
 
   static const _crossAxisCount = 5;
@@ -157,7 +158,7 @@ class _GalleryViewState extends State<GalleryView> {
               if (delta > 10) {
                 if (!_isDragging) {
                   _isDragging = true;
-                  vm.clearSelection();
+                  _preDragSelection = Set.from(vm.selectedPaths);
                 }
                 _dragCurrent = event.localPosition;
                 _updateDragSelection(vm);
@@ -167,6 +168,7 @@ class _GalleryViewState extends State<GalleryView> {
             onPointerUp: (event) {
               if (_isDragging) {
                 _isDragging = false;
+                _preDragSelection = null;
                 _dragStart = null;
                 _dragCurrent = null;
                 setState(() {});
@@ -255,7 +257,7 @@ class _GalleryViewState extends State<GalleryView> {
     final itemWidth = (_gridWidth - _gridPadding * 2 - _crossAxisSpacing * (_crossAxisCount - 1)) / _crossAxisCount;
     final itemHeight = itemWidth;
 
-    final selected = <String>{};
+    final selected = _preDragSelection != null ? Set<String>.from(_preDragSelection!) : <String>{};
     for (int i = 0; i < vm.items.length; i++) {
       final row = i ~/ _crossAxisCount;
       final col = i % _crossAxisCount;

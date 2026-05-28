@@ -274,7 +274,7 @@ class _HomeViewState extends State<HomeView> {
                     },
                     child: const Text('检查更新'),
                   ),
-                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('确定')),
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
               ],
             ),
           );
@@ -295,6 +295,20 @@ class _HomeViewState extends State<HomeView> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('新版本：v${info.version}'),
+            if (info.notes != null && info.notes!.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Container(
+                constraints: const BoxConstraints(maxHeight: 200),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                padding: const EdgeInsets.all(12),
+                child: SingleChildScrollView(
+                  child: Text(info.notes!, style: Theme.of(context).textTheme.bodySmall),
+                ),
+              ),
+            ],
             const SizedBox(height: 8),
             const Text('前往 GitHub 下载最新版本'),
           ],
@@ -333,7 +347,7 @@ class _LinkButton extends StatelessWidget {
           children: [
             Icon(icon, size: 18, color: Theme.of(context).colorScheme.primary),
             const SizedBox(width: 8),
-            Text(url, style: TextStyle(
+            Text(label, style: TextStyle(
               color: Theme.of(context).colorScheme.primary,
               decoration: TextDecoration.underline,
               decorationColor: Theme.of(context).colorScheme.primary,
