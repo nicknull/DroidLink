@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:path/path.dart' as p;
+import 'package:archive/archive.dart';
 import 'package:android_manager/constants/app_names.dart';
 import 'package:android_manager/services/apk_resource_parser.dart';
 
@@ -178,6 +180,15 @@ class AdbService {
     }
   }
 
+  /// 同步获取 app 数据目录下的工具存储路径（基于 path_provider 缓存规则推算）
+  static String get _toolsDirSync {
+    if (Platform.isWindows) {
+      final appData = Platform.environment['LOCALAPPDATA'] ?? '';
+      if (appData.isNotEmpty) return p.join(appData, 'android_manager', 'tools');
+    }
+    return p.join(Directory.systemTemp.path, 'android_manager', 'tools');
+  }
+
   void _detectScrcpy() {
     final name = Platform.isWindows ? 'scrcpy.exe' : 'scrcpy';
 
@@ -195,7 +206,16 @@ class AdbService {
       }
     }
 
-    // 2. 通过 which/where 查找（开发模式下有效）
+    // 2. Windows 检查 app 数据目录
+    if (Platform.isWindows) {
+      final localScrcpy = p.join(_toolsDirSync, 'scrcpy', name);
+      if (File(localScrcpy).existsSync()) {
+        _scrcpyPath = localScrcpy;
+        return;
+      }
+    }
+
+    // 3. 通过 which/where 查找（开发模式下有效）
     final cmd = Platform.isWindows ? 'where' : 'which';
     final result = Process.runSync(cmd, [name], runInShell: true);
     if (result.exitCode == 0) {
@@ -275,13 +295,13 @@ class AdbService {
   // 安装缺失的工具，返回结构化事件流
   Stream<InstallEvent> installTool(String tool) async* {
     if (Platform.isWindows) {
-      yield const InstallEvent(InstallEventType.log, 'Windows 请手动安装:\n');
-      if (tool == 'adb') {
-        yield const InstallEvent(InstallEventType.log, 'https://developer.android.com/tools/releases/platform-tools\n');
+      if (tool == 'scrcpy') {
+        yield* _installScrcpyWindows();
       } else {
-        yield const InstallEvent(InstallEventType.log, 'https://github.com/Genymobile/scrcpy\n');
+        yield const InstallEvent(InstallEventType.log, 'Windows 请手动安装 adb:\n');
+        yield const InstallEvent(InstallEventType.log, 'https://developer.android.com/tools/releases/platform-tools\n');
+        yield const InstallEvent(InstallEventType.error, '请手动安装后点击「重新检测」');
       }
-      yield const InstallEvent(InstallEventType.error, '请手动安装后点击「重新检测」');
       return;
     }
 
@@ -514,6 +534,86 @@ class AdbService {
     return result.exitCode == 0;
   }
 
+  /// Windows 上自动下载安装 scrcpy 到 app 数据目录
+  Stream<InstallEvent> _installScrcpyWindows() async* {
+    try {
+      yield const InstallEvent(InstallEventType.log, '正在获取 scrcpy 最新版本...\n');
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 15);
+      try {
+        final request = await client.getUrl(Uri.parse('https://api.github.com/repos/Genymobile/scrcpy/releases/latest'));
+        request.headers.set('User-Agent', 'DroidLink');
+        final response = await request.close();
+        if (response.statusCode != 200) {
+          yield InstallEvent(InstallEventType.error, '获取版本信息失败 (HTTP ${response.statusCode})');
+          return;
+        }
+        final body = await response.transform(utf8.decoder).join();
+        final json = jsonDecode(body) as Map<String, dynamic>;
+        final tagName = (json['tag_name'] as String?) ?? '';
+        if (tagName.isEmpty) {
+          yield const InstallEvent(InstallEventType.error, '无法解析版本号');
+          return;
+        }
+        final version = tagName.replaceFirst(RegExp(r'^v'), '');
+        final zipName = 'scrcpy-win64-v$version.zip';
+        final zipUrl = 'https://github.com/Genymobile/scrcpy/releases/download/$tagName/$zipName';
+
+        yield InstallEvent(InstallEventType.log, '正在下载 scrcpy v$version (约 15MB)...\n');
+
+        // 下载 ZIP 到临时文件
+        final tempDir = Directory.systemTemp.createTempSync('scrcpy_');
+        final zipPath = p.join(tempDir.path, zipName);
+        final downloadRequest = await client.getUrl(Uri.parse(zipUrl));
+        downloadRequest.headers.set('User-Agent', 'DroidLink');
+        final downloadResponse = await downloadRequest.close();
+        if (downloadResponse.statusCode != 200) {
+          yield InstallEvent(InstallEventType.error, '下载失败 (HTTP ${downloadResponse.statusCode})');
+          tempDir.deleteSync(recursive: true);
+          return;
+        }
+        final zipFile = File(zipPath);
+        final sink = zipFile.openWrite();
+        await downloadResponse.pipe(sink);
+
+        yield const InstallEvent(InstallEventType.log, '正在解压...\n');
+
+        // 解压到 app 数据目录
+        final toolsPath = p.join(_toolsDirSync, 'scrcpy');
+        final destDir = Directory(toolsPath);
+        if (destDir.existsSync()) destDir.deleteSync(recursive: true);
+
+        final bytes = await zipFile.readAsBytes();
+        final archive = ZipDecoder().decodeBytes(bytes);
+        for (final file in archive) {
+          final filePath = p.join(toolsPath, file.name);
+          if (file.isFile) {
+            File(filePath)
+              ..createSync(recursive: true)
+              ..writeAsBytesSync(file.content as List<int>);
+          } else {
+            Directory(filePath).createSync(recursive: true);
+          }
+        }
+
+        // 清理临时文件
+        tempDir.deleteSync(recursive: true);
+
+        // 刷新检测
+        reDetectScrcpy();
+        if (hasScrcpy) {
+          yield InstallEvent(InstallEventType.success, 'scrcpy v$version 安装成功！');
+        } else {
+          yield const InstallEvent(InstallEventType.error, '安装完成但未检测到 scrcpy，请点击「重新检测」');
+        }
+      } finally {
+        client.close();
+      }
+    } catch (e) {
+      yield InstallEvent(InstallEventType.error, '安装失败: $e');
+    }
+  }
+
   /// 移除 macOS 隔离标记（quarantine），防止系统静默阻止 scrcpy 运行
   void _removeQuarantine() {
     if (!Platform.isMacOS || _scrcpyPath == null) return;
@@ -532,6 +632,7 @@ class AdbService {
     } else if (Platform.isWindows) {
       final localAppData = env['LOCALAPPDATA'];
       extraDirs = [
+        p.join(_toolsDirSync, 'scrcpy'),
         if (localAppData != null) '$localAppData\\Android\\sdk\\platform-tools',
         r'C:\Program Files\scrcpy',
       ];
