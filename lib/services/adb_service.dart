@@ -525,13 +525,23 @@ class AdbService {
   /// 构建 scrcpy 所需的环境变量（注入已知工具路径）
   Map<String, String> _scrcpyEnv() {
     final env = Map<String, String>.from(Platform.environment);
+    final sep = Platform.isWindows ? ';' : ':';
+    final List<String> extraDirs;
     if (Platform.isMacOS) {
-      final extraDirs = ['/opt/homebrew/bin', '/usr/local/bin'];
-      final currentPath = env['PATH'] ?? '';
-      final missing = extraDirs.where((d) => !currentPath.contains(d));
-      if (missing.isNotEmpty) {
-        env['PATH'] = '${missing.join(':')}:$currentPath';
-      }
+      extraDirs = ['/opt/homebrew/bin', '/usr/local/bin'];
+    } else if (Platform.isWindows) {
+      final localAppData = env['LOCALAPPDATA'];
+      extraDirs = [
+        if (localAppData != null) '$localAppData\\Android\\sdk\\platform-tools',
+        r'C:\Program Files\scrcpy',
+      ];
+    } else {
+      return env;
+    }
+    final currentPath = env['PATH'] ?? '';
+    final missing = extraDirs.where((d) => !currentPath.contains(d));
+    if (missing.isNotEmpty) {
+      env['PATH'] = '${missing.join(sep)}$sep$currentPath';
     }
     return env;
   }
@@ -572,7 +582,10 @@ class AdbService {
     );
     if (exitCode != -1) {
       final err = stderrBuf.toString().trim();
-      throw Exception('scrcpy 启动失败 (exit code: $exitCode)\n${err.isNotEmpty ? err : "可能是 macOS 安全限制，请在系统设置 → 隐私与安全性中允许运行 scrcpy"}');
+      final hint = Platform.isMacOS
+          ? '可能是 macOS 安全限制，请在系统设置 → 隐私与安全性中允许运行 scrcpy'
+          : '请确认 scrcpy 和 ADB 已正确安装并在 PATH 中';
+      throw Exception('scrcpy 启动失败 (exit code: $exitCode)\n${err.isNotEmpty ? err : hint}');
     }
 
     // macOS 下 scrcpy 窗口不会自动抢前台焦点，延迟后用 AppleScript 激活
