@@ -223,42 +223,69 @@ class _HomeViewState extends State<HomeView> {
   }
 
   void _showAbout(BuildContext context) {
+    bool checking = false;
     showDialog(
       context: context,
       builder: (ctx) => FutureBuilder<PackageInfo>(
         future: PackageInfo.fromPlatform(),
         builder: (ctx, snap) {
           final version = snap.data?.version ?? '-';
-          return AlertDialog(
-            title: Row(
-              children: [
-                Image.asset('assets/icon.png', width: 32, height: 32),
-                const SizedBox(width: 12),
-                const Text('DroidLink'),
+          return StatefulBuilder(
+            builder: (ctx, setDialogState) => AlertDialog(
+              title: Row(
+                children: [
+                  Image.asset('assets/icon.png', width: 32, height: 32),
+                  const SizedBox(width: 12),
+                  const Text('DroidLink'),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('版本：$version'),
+                  const SizedBox(height: 8),
+                  const Text('Android 设备桌面管理工具'),
+                  const SizedBox(height: 16),
+                  const _LinkButton(icon: Icons.code, label: 'GitHub', url: 'https://github.com/nicknull/DroidLink'),
+                ],
+              ),
+              actions: [
+                if (checking)
+                  const Padding(
+                    padding: EdgeInsets.only(right: 8),
+                    child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                  )
+                else
+                  TextButton(
+                    onPressed: () async {
+                      setDialogState(() => checking = true);
+                      final info = await UpdateService.checkForUpdate();
+                      if (!ctx.mounted) return;
+                      setDialogState(() => checking = false);
+                      if (info != null) {
+                        Navigator.pop(ctx);
+                        _showUpdateDialog(context, info);
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('已是最新版本')),
+                        );
+                      }
+                    },
+                    child: const Text('检查更新'),
+                  ),
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('确定')),
               ],
             ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('版本：$version'),
-                const SizedBox(height: 8),
-                const Text('Android 设备桌面管理工具'),
-                const SizedBox(height: 16),
-                const _LinkButton(icon: Icons.code, label: 'GitHub', url: 'https://github.com/nicknull/DroidLink'),
-              ],
-            ),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('确定')),
-            ],
           );
         },
       ),
     );
   }
 
-  void _showUpdateDialog(BuildContext context) {
-    final info = _updateInfo!;
+  void _showUpdateDialog(BuildContext context, [UpdateInfo? updateInfo]) {
+    final info = updateInfo ?? _updateInfo;
+    if (info == null) return;
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
