@@ -22,6 +22,10 @@ class GalleryViewModel extends ChangeNotifier {
   final Set<String> _exportedPaths = {};
   bool _disposed = false;
 
+  bool _importing = false;
+  int _importProgress = 0;
+  int _importTotal = 0;
+
   // 缩略图并发控制：最多 3 个同时拉取
   final Map<String, Future<String?>> _pendingThumbs = {};
   int _activeThumbDownloads = 0;
@@ -39,6 +43,9 @@ class GalleryViewModel extends ChangeNotifier {
   bool get loading => _loading;
   bool get loadingMore => _loadingMore;
   String? get error => _error;
+  bool get importing => _importing;
+  int get importProgress => _importProgress;
+  int get importTotal => _importTotal;
 
   Future<void> loadMedia() async {
     _loading = true;
@@ -191,6 +198,68 @@ class GalleryViewModel extends ChangeNotifier {
   Future<bool> exportSingle(String localDir, MediaItem item) async {
     final ok = await _adb.pullFile(_serial, item.path, p.join(localDir, item.name));
     if (ok) _exportedPaths.add(item.path);
+    return ok;
+  }
+
+  static const _importDeviceDir = '/sdcard/DCIM/Camera';
+
+  Future<int> importFiles(List<String> localPaths) async {
+    _importing = true;
+    _importProgress = 0;
+    _importTotal = localPaths.length;
+    if (!_disposed) notifyListeners();
+
+    int count = 0;
+    for (final localPath in localPaths) {
+      if (_disposed) break;
+      final name = p.basename(localPath);
+      final remotePath = '$_importDeviceDir/$name';
+      final ok = await _adb.pushFile(_serial, localPath, remotePath);
+      if (ok) count++;
+      _importProgress++;
+      if (!_disposed) notifyListeners();
+    }
+
+    // 触发媒体扫描
+    if (count > 0) {
+      await _adb.shell(_serial, 'am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file://$_importDeviceDir/');
+    }
+
+    _importing = false;
+    if (!_disposed) notifyListeners();
+    return count;
+  }
+
+  Future<int> deleteSelected() async {
+    int count = 0;
+    final toDelete = _allItems.where((i) => _selectedPaths.contains(i.path)).toList();
+    for (final item in toDelete) {
+      if (_disposed) break;
+      final ok = await _adb.deleteFile(_serial, item.path);
+      if (ok) {
+        _allItems.remove(item);
+        _exportedPaths.remove(item.path);
+        count++;
+      }
+    }
+    _selectedPaths.clear();
+    if (_displayCount > _allItems.length) {
+      _displayCount = _allItems.length;
+    }
+    if (!_disposed) notifyListeners();
+    return count;
+  }
+
+  Future<bool> deleteSingle(MediaItem item) async {
+    final ok = await _adb.deleteFile(_serial, item.path);
+    if (ok) {
+      _allItems.remove(item);
+      _exportedPaths.remove(item.path);
+      if (_displayCount > _allItems.length) {
+        _displayCount = _allItems.length;
+      }
+    }
+    if (!_disposed) notifyListeners();
     return ok;
   }
 

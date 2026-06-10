@@ -13,6 +13,17 @@ import 'package:android_manager/viewmodels/gallery_viewmodel.dart';
 import 'package:android_manager/models/media_item.dart';
 import 'package:android_manager/views/components/media_grid_item.dart';
 
+const _imageVideoTypeGroup = XTypeGroup(
+  label: '图片和视频',
+  extensions: [
+    'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp',
+    'mp4', '3gp', 'webm', 'mkv', 'avi', 'mov',
+  ],
+  mimeTypes: [
+    'image/*', 'video/*',
+  ],
+);
+
 class GalleryView extends StatefulWidget {
   const GalleryView({super.key});
 
@@ -112,8 +123,18 @@ class _GalleryViewState extends State<GalleryView> {
           TextButton(onPressed: vm.selectAll, child: const Text('全选')),
           if (hasSelection) ...[
             TextButton(onPressed: () => _exportSelected(vm), child: const Text('导出')),
+            TextButton(
+              onPressed: () => _deleteSelected(vm),
+              child: const Text('删除', style: TextStyle(color: Colors.red)),
+            ),
             TextButton(onPressed: vm.clearSelection, child: const Text('清除')),
           ],
+          TextButton(
+            onPressed: vm.importing ? null : () => _importFiles(vm),
+            child: vm.importing
+                ? Text('导入中 ${vm.importProgress}/${vm.importTotal}')
+                : const Text('导入'),
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () => vm.loadMedia(),
@@ -398,6 +419,44 @@ class _GalleryViewState extends State<GalleryView> {
       );
     }
   }
+
+  Future<void> _importFiles(GalleryViewModel vm) async {
+    final files = await openFiles(acceptedTypeGroups: [_imageVideoTypeGroup]);
+    if (files.isEmpty) return;
+    final paths = files.map((f) => f.path).toList();
+    final count = await vm.importFiles(paths);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已导入 $count 个文件到手机相册')),
+      );
+      vm.loadMedia();
+    }
+  }
+
+  Future<void> _deleteSelected(GalleryViewModel vm) async {
+    final count = vm.selectedPaths.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('确认删除'),
+        content: Text('确定要从设备上删除选中的 $count 个文件吗？此操作不可撤销。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final deleted = await vm.deleteSelected();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已删除 $deleted 个文件')),
+      );
+    }
+  }
 }
 
 /// 可拖拽调整大小的预览窗口
@@ -460,6 +519,44 @@ class _PreviewDialogState extends State<_PreviewDialog> {
     setState(() => _index = newIndex);
   }
 
+  Future<void> _deleteFromPreview(MediaItem item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('确认删除'),
+        content: Text('确定要从设备上删除 ${item.name} 吗？此操作不可撤销。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final ok = await widget.vm.deleteSingle(item);
+    if (!mounted) return;
+    if (ok) {
+      if (widget.vm.items.isEmpty) {
+        Navigator.pop(context);
+      } else {
+        setState(() {
+          if (_index >= widget.vm.items.length) {
+            _index = widget.vm.items.length - 1;
+          }
+        });
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已删除')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('删除失败')),
+      );
+    }
+  }
+
   @override
   void dispose() {
     _hideTimer?.cancel();
@@ -518,6 +615,11 @@ class _PreviewDialogState extends State<_PreviewDialog> {
                                 Expanded(child: Text(item.name, style: const TextStyle(fontWeight: FontWeight.w500))),
                                 Text('${_index + 1} / ${widget.vm.items.length}',
                                   style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+                                IconButton(
+                                  onPressed: () => _deleteFromPreview(item),
+                                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                  tooltip: '删除',
+                                ),
                                 IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
                               ],
                             ),
