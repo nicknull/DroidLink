@@ -2,7 +2,6 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:android_manager/models/media_item.dart';
 import 'package:android_manager/services/adb_service.dart';
-import 'package:android_manager/utils/constants.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
@@ -65,41 +64,39 @@ class GalleryViewModel extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  /// 用 find 命令一次性扫描所有媒体文件，避免递归 ls 的多次 ADB 调用
+  /// 通过 MediaStore 查询媒体文件，和系统相册用同一数据源，保证内容完全一致
   Future<List<MediaItem>> _scanAllMedia() async {
     final allItems = <MediaItem>[];
 
-    for (final mediaPath in AppConstants.mediaPaths) {
+    final queries = [
+      ('content://media/external/images/media', false),
+      ('content://media/external/video/media', true),
+    ];
+
+    for (final (uri, isVideo) in queries) {
       if (_disposed) return allItems;
 
-      // 构造 find 命令查找图片和视频
-      final extensions = [
-        'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp',
-        'mp4', '3gp', 'webm', 'mkv', 'avi', 'mov',
-      ];
-      final namePatterns = extensions.map((ext) => '-name "*.$ext"').join(' -o ');
-      final excludes = AppConstants.excludePatterns.join(' ');
-      final cmd = 'find "$mediaPath" -type f \\( $namePatterns \\) $excludes -exec stat -c "%s %Y %n" {} \\; 2>/dev/null';
-
+      final cmd = 'content query --uri $uri --projection _data:_size:date_added';
       final output = await _adb.shell(_serial, cmd);
       if (output.isEmpty) continue;
 
       for (final line in output.split('\n')) {
-        if (line.trim().isEmpty) continue;
-        // 格式: size path
-        final spaceIdx = line.indexOf(' ');
-        if (spaceIdx == -1) continue;
+        if (!line.startsWith('Row:')) continue;
 
-        final sizeStr = line.substring(0, spaceIdx);
-        final secondSpace = line.indexOf(' ', spaceIdx + 1);
-        if (secondSpace == -1) continue;
+        // content query 输出格式: Row: N _data=/path, _size=123, date_added=456
+        // _data 用下一个字段锚定，避免路径含逗号时截断
+        final dataMatch = RegExp(r'_data=(.+), _size=').firstMatch(line);
+        if (dataMatch == null) continue;
 
-        final timestampStr = line.substring(spaceIdx + 1, secondSpace);
-        final filePath = line.substring(secondSpace + 1).trim();
+        final filePath = dataMatch.group(1)!.trim();
+        if (filePath.isEmpty || filePath == 'null') continue;
+
+        final sizeMatch = RegExp(r'_size=(\d+)').firstMatch(line);
+        final dateMatch = RegExp(r'date_added=(\d+)').firstMatch(line);
 
         final name = p.basename(filePath);
-        final size = int.tryParse(sizeStr) ?? 0;
-        final timestamp = int.tryParse(timestampStr) ?? 0;
+        final size = int.tryParse(sizeMatch?.group(1) ?? '') ?? 0;
+        final timestamp = int.tryParse(dateMatch?.group(1) ?? '') ?? 0;
         final date = DateTime.fromMillisecondsSinceEpoch(timestamp * 1000);
         final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
 
@@ -109,7 +106,7 @@ class GalleryViewModel extends ChangeNotifier {
           size: size,
           modifiedDate: dateStr,
           timestamp: timestamp,
-          isVideo: MediaItem.isVideoFile(name),
+          isVideo: isVideo,
         ));
       }
     }
