@@ -232,6 +232,7 @@ class GalleryViewModel extends ChangeNotifier {
 
   Future<int> deleteSelected() async {
     int count = 0;
+    String? lastDir;
     final toDelete = _allItems.where((i) => _selectedPaths.contains(i.path)).toList();
     for (final item in toDelete) {
       if (_disposed) break;
@@ -239,12 +240,17 @@ class GalleryViewModel extends ChangeNotifier {
       if (ok) {
         _allItems.remove(item);
         _exportedPaths.remove(item.path);
+        lastDir = p.dirname(item.path);
         count++;
       }
     }
     _selectedPaths.clear();
     if (_displayCount > _allItems.length) {
       _displayCount = _allItems.length;
+    }
+    // 触发媒体扫描让系统相册同步
+    if (count > 0 && lastDir != null) {
+      await _adb.shell(_serial, 'am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file://$lastDir/');
     }
     if (!_disposed) notifyListeners();
     return count;
@@ -258,6 +264,8 @@ class GalleryViewModel extends ChangeNotifier {
       if (_displayCount > _allItems.length) {
         _displayCount = _allItems.length;
       }
+      // 触发媒体扫描让系统相册同步
+      await _adb.shell(_serial, 'am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file://${p.dirname(item.path)}/');
     }
     if (!_disposed) notifyListeners();
     return ok;

@@ -400,9 +400,12 @@ class AdbService {
   }
 
   Future<bool> deleteFile(String serial, String path, {bool recursive = false}) async {
-    final cmd = recursive ? 'rm -rf ${_shellEscape(path)}' : 'rm ${_shellEscape(path)}';
+    final rmCmd = recursive ? 'rm -rf' : 'rm';
+    // adb shell 的 exit code 不一定反映内部命令结果，用 echo 标记验证真实成功
+    // stderr 重定向到 stdout 便于失败时排错
+    final cmd = '$rmCmd ${_shellEscape(path)} 2>&1 && echo __DEL_OK__';
     final result = await _runCommand(['-s', serial, 'shell', cmd]);
-    return result.exitCode == 0;
+    return result.stdout.contains('__DEL_OK__');
   }
 
   Future<bool> mkdir(String serial, String path) async {
@@ -762,6 +765,70 @@ class AdbService {
   Future<bool> forceStopApp(String serial, String packageName) async {
     final result = await _runCommand(['-s', serial, 'shell', 'am', 'force-stop', packageName]);
     return result.exitCode == 0;
+  }
+
+  /// 从 Android 设备读取剪贴板内容
+  Future<String?> getDeviceClipboard(String serial) async {
+    final result = await _runCommand([
+      '-s', serial, 'shell',
+      'service call clipboard 1',
+    ]);
+    if (result.exitCode != 0) return null;
+    return _parseClipboardParcel(result.stdout);
+  }
+
+  /// 向 Android 设备写入剪贴板内容
+  Future<bool> setDeviceClipboard(String serial, String text) async {
+    final escaped = text.replaceAll('"', '\\"').replaceAll('\$', '\\\$');
+    final result = await _runCommand([
+      '-s', serial, 'shell',
+      'service call clipboard 2 i32 1 i32 1 s16 "$escaped"',
+    ]);
+    return result.exitCode == 0;
+  }
+
+  /// 在手机浏览器中打开 URL
+  Future<bool> openUrlOnDevice(String serial, String url) async {
+    final result = await _runCommand([
+      '-s', serial, 'shell',
+      'am', 'start', '-a', 'android.intent.action.VIEW', '-d', url,
+    ]);
+    return result.exitCode == 0;
+  }
+
+  static String? _parseClipboardParcel(String output) {
+    final match = RegExp(r"'([^']*)'").firstMatch(output);
+    if (match != null) {
+      final text = match.group(1);
+      if (text != null && text.isNotEmpty) {
+        return text.replaceFirst(RegExp(r'^\.+'), '');
+      }
+    }
+    final hexMatch = RegExp(r'Result: Parcel\(([\s\S]*?)\)').firstMatch(output);
+    if (hexMatch != null) {
+      final hexStr = hexMatch.group(1)!
+          .split(RegExp(r'\s+'))
+          .where((h) => RegExp(r'^[0-9a-fA-F]{8}$').hasMatch(h))
+          .map((h) => _hexToString(h))
+          .where((s) => s.isNotEmpty)
+          .join('');
+      if (hexStr.isNotEmpty && !RegExp(r'^[\x00-\x08]').hasMatch(hexStr)) {
+        return hexStr;
+      }
+    }
+    return null;
+  }
+
+  static String _hexToString(String hex) {
+    try {
+      final bytes = <int>[];
+      for (int i = 0; i < hex.length; i += 2) {
+        bytes.add(int.parse(hex.substring(i, i + 2), radix: 16));
+      }
+      return String.fromCharCodes(bytes.reversed);
+    } catch (_) {
+      return '';
+    }
   }
 
   Future<_CmdResult> _runCommand(List<String> args) async {

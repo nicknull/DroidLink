@@ -9,6 +9,7 @@ class MediaGridItem extends StatelessWidget {
   final VoidCallback? onDoubleTap;
   final Future<String?> Function(MediaItem) thumbnailLoader;
   final VoidCallback? onExport;
+  final VoidCallback? onDelete;
 
   const MediaGridItem({
     super.key,
@@ -18,6 +19,7 @@ class MediaGridItem extends StatelessWidget {
     this.onDoubleTap,
     required this.thumbnailLoader,
     this.onExport,
+    this.onDelete,
   });
 
   @override
@@ -79,6 +81,8 @@ class MediaGridItem extends StatelessWidget {
         children: [
           if (onExport != null)
             _MenuItem(icon: Icons.download, label: '导出到电脑', onTap: () { entry.remove(); onExport!(); }),
+          if (onDelete != null)
+            _MenuItem(icon: Icons.delete, label: '删除', color: Colors.red, onTap: () { entry.remove(); onDelete!(); }),
         ],
       ),
     );
@@ -139,20 +143,22 @@ class _MenuItem extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
+  final Color? color;
 
-  const _MenuItem({required this.icon, required this.label, required this.onTap});
+  const _MenuItem({required this.icon, required this.label, required this.onTap, this.color});
 
   @override
   Widget build(BuildContext context) {
+    final itemColor = color ?? Theme.of(context).colorScheme.onSurface;
     return InkWell(
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         child: Row(
           children: [
-            Icon(icon, size: 18, color: Theme.of(context).colorScheme.onSurface),
+            Icon(icon, size: 18, color: itemColor),
             const SizedBox(width: 12),
-            Text(label, style: Theme.of(context).textTheme.bodyMedium),
+            Text(label, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: itemColor)),
           ],
         ),
       ),

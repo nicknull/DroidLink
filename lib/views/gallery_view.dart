@@ -13,15 +13,17 @@ import 'package:android_manager/viewmodels/gallery_viewmodel.dart';
 import 'package:android_manager/models/media_item.dart';
 import 'package:android_manager/views/components/media_grid_item.dart';
 
-const _imageVideoTypeGroup = XTypeGroup(
+const _mediaExtensions = [
+  'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp',
+  'mp4', '3gp', 'webm', 'mkv', 'avi', 'mov',
+];
+
+final _mediaExtensionSet = _mediaExtensions.toSet();
+
+final _imageVideoTypeGroup = XTypeGroup(
   label: '图片和视频',
-  extensions: [
-    'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp',
-    'mp4', '3gp', 'webm', 'mkv', 'avi', 'mov',
-  ],
-  mimeTypes: [
-    'image/*', 'video/*',
-  ],
+  extensions: _mediaExtensions,
+  mimeTypes: ['image/*', 'video/*'],
 );
 
 class GalleryView extends StatefulWidget {
@@ -39,6 +41,7 @@ class _GalleryViewState extends State<GalleryView> {
   Offset? _dragStart;
   Offset? _dragCurrent;
   bool _isDragging = false;
+  bool _isDropOver = false;
   Set<String>? _preDragSelection;
   double _gridWidth = 0;
 
@@ -96,14 +99,112 @@ class _GalleryViewState extends State<GalleryView> {
 
     return ChangeNotifierProvider.value(
       value: _vm!,
-      child: Builder(builder: (context) => Column(
-        children: [
-          _buildToolbar(context),
-          const Divider(height: 1),
-          Expanded(child: _buildGrid(context)),
-        ],
-      )),
+      child: Builder(builder: (context) {
+        final content = Column(
+          children: [
+            _buildToolbar(context),
+            const Divider(height: 1),
+            Expanded(child: _buildGrid(context)),
+          ],
+        );
+        return DropRegion(
+          formats: const [Formats.fileUri],
+          onDropOver: (event) {
+            final hasFile = event.session.items.any((i) => i.canProvide(Formats.fileUri));
+            if (!hasFile) return DropOperation.none;
+            setState(() => _isDropOver = true);
+            return DropOperation.copy;
+          },
+          onDropLeave: (_) => setState(() => _isDropOver = false),
+          onPerformDrop: (event) => _performDropImport(event),
+          child: Stack(
+            children: [
+              content,
+              if (_isDropOver)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Container(
+                      color: Colors.blue.withValues(alpha: 0.2),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.cloud_upload, size: 64, color: Colors.blue),
+                            const SizedBox(height: 16),
+                            Text(
+                              '松开以导入到手机相册',
+                              style: TextStyle(
+                                fontSize: 18,
+                                color: Colors.blue,
+                                fontWeight: FontWeight.w500,
+                                decoration: TextDecoration.none,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      }),
     );
+  }
+
+  Future<void> _performDropImport(PerformDropEvent event) async {
+    setState(() => _isDropOver = false);
+    final vm = _vm;
+    if (vm == null) return;
+
+    final paths = <String>[];
+    for (final item in event.session.items) {
+      final reader = item.dataReader;
+      if (reader == null) continue;
+      if (!reader.canProvide(Formats.fileUri)) continue;
+      final completer = Completer<String?>();
+      reader.getValue<Uri>(Formats.fileUri, (uri) {
+        if (uri != null && uri.scheme == 'file') {
+          try {
+            completer.complete(uri.toFilePath());
+          } catch (_) {
+            completer.complete(null);
+          }
+        } else {
+          completer.complete(null);
+        }
+      }, onError: (_) => completer.complete(null));
+      final path = await completer.future.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => null,
+      );
+      if (path != null) {
+        final ext = p.extension(path).toLowerCase().replaceFirst('.', '');
+        if (_mediaExtensionSet.contains(ext)) {
+          paths.add(path);
+        }
+      }
+    }
+
+    if (paths.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('没有可导入的图片或视频文件')),
+        );
+      }
+      return;
+    }
+
+    final count = await vm.importFiles(paths);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(
+          count > 0 ? '已导入 $count 个文件到手机相册' : '导入失败，请检查设备连接',
+        )),
+      );
+      if (count > 0) vm.loadMedia();
+    }
   }
 
   Widget _buildToolbar(BuildContext context) {
@@ -129,15 +230,16 @@ class _GalleryViewState extends State<GalleryView> {
             ),
             TextButton(onPressed: vm.clearSelection, child: const Text('清除')),
           ],
-          TextButton(
-            onPressed: vm.importing ? null : () => _importFiles(vm),
-            child: vm.importing
-                ? Text('导入中 ${vm.importProgress}/${vm.importTotal}')
-                : const Text('导入'),
-          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () => vm.loadMedia(),
+          ),
+          TextButton.icon(
+            onPressed: vm.importing ? null : () => _importFiles(vm),
+            icon: const Icon(Icons.upload),
+            label: vm.importing
+                ? Text('导入中 ${vm.importProgress}/${vm.importTotal}')
+                : const Text('导入'),
           ),
         ],
       ),
@@ -153,6 +255,11 @@ class _GalleryViewState extends State<GalleryView> {
 
     return LayoutBuilder(builder: (context, constraints) {
       _gridWidth = constraints.maxWidth;
+
+      // 清理不可见且未选中项的 GlobalKey，避免大相册长期使用内存泄漏
+      final visiblePaths = vm.items.map((e) => e.path).toSet();
+      _dragItemKeys.removeWhere((path, _) =>
+        !vm.selectedPaths.contains(path) && !visiblePaths.contains(path));
 
       return DragItemWidget(
         dragItemProvider: (_) async => null,
@@ -222,31 +329,26 @@ class _GalleryViewState extends State<GalleryView> {
                     final item = vm.items[index];
                     final isSelected = vm.selectedPaths.contains(item.path);
 
-                    if (isSelected && _supportsDragExport) {
-                      _dragItemKeys[item.path] ??= GlobalKey<DragItemWidgetState>();
-                      return DragItemWidget(
-                        key: _dragItemKeys[item.path],
-                        dragItemProvider: (_) => _createDragItem(item),
-                        allowedOperations: () => [DropOperation.copy],
-                        child: MediaGridItem(
-                          item: item,
-                          isSelected: true,
-                          onTap: () => vm.toggleSelection(item.path),
-                          onDoubleTap: () => _openPreview(context, vm, item),
-                          thumbnailLoader: (i) => vm.getThumbnail(i),
-                          onExport: () => _exportSingle(vm, item),
-                        ),
-                      );
-                    }
-
-                    _dragItemKeys.remove(item.path);
-                    return MediaGridItem(
+                    final gridItem = MediaGridItem(
                       item: item,
                       isSelected: isSelected,
                       onTap: () => vm.toggleSelection(item.path),
                       onDoubleTap: () => _openPreview(context, vm, item),
                       thumbnailLoader: (i) => vm.getThumbnail(i),
                       onExport: () => _exportSingle(vm, item),
+                      onDelete: () => _deleteSingleWithConfirm(vm, item),
+                    );
+
+                    if (!_supportsDragExport) return gridItem;
+
+                    // 始终用 DragItemWidget 包裹，保持 widget 树结构一致，
+                    // 避免选中状态切换时手势识别器重建导致 onTap 失效
+                    _dragItemKeys[item.path] ??= GlobalKey<DragItemWidgetState>();
+                    return DragItemWidget(
+                      key: _dragItemKeys[item.path],
+                      dragItemProvider: (_) async => isSelected ? _createDragItem(item) : null,
+                      allowedOperations: () => [DropOperation.copy],
+                      child: gridItem,
                     );
                   },
                 ),
@@ -427,9 +529,11 @@ class _GalleryViewState extends State<GalleryView> {
     final count = await vm.importFiles(paths);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已导入 $count 个文件到手机相册')),
+        SnackBar(content: Text(
+          count > 0 ? '已导入 $count 个文件到手机相册' : '导入失败，请检查设备连接',
+        )),
       );
-      vm.loadMedia();
+      if (count > 0) vm.loadMedia();
     }
   }
 
@@ -454,6 +558,30 @@ class _GalleryViewState extends State<GalleryView> {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('已删除 $deleted 个文件')),
+      );
+    }
+  }
+
+  Future<void> _deleteSingleWithConfirm(GalleryViewModel vm, MediaItem item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('确认删除'),
+        content: Text('确定要从设备上删除 ${item.name} 吗？此操作不可撤销。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final ok = await vm.deleteSingle(item);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(ok ? '已删除 ${item.name}' : '删除失败')),
       );
     }
   }
